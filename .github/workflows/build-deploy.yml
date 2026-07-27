@@ -1,0 +1,51 @@
+name: build-and-deploy
+
+on:
+  schedule:
+    # 北京时间 07:30 与 09:30（美股收盘数据发布后，跑两次吸收上游修正）
+    - cron: "30 23 * * *"
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # 把累积后的 data/cache 与新 bundle 提交回仓库
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建数据包
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python3 build_data.py
+
+      - name: 提交累积数据回仓库
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/cache public/data
+          git diff --cached --quiet || git commit -m "data: refresh $(date -u +%FT%H:%MZ)"
+          git pull --rebase origin main || true
+          git push
+
+      - name: 上传站点产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

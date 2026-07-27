@@ -1,0 +1,12 @@
+# 本地密钥：绝不入库（CI 用 GitHub Secrets 里的 FRED_API_KEY）
+config.json
+
+__pycache__/
+*.pyc
+.DS_Store
+
+# 注意：data/cache/ 与 public/data/ 故意入库——
+# 前者是 CI 热启动缓存 + ICE BofA 滚动累积的本体，后者是部署产物。
+
+# Claude Code 本地配置
+.claude/settings.local.json

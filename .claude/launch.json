@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "market-monitor",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": ["-u", "server.py"],
+      "port": 8967
+    },
+    {
+      "name": "static-test",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8970", "--directory", "public"],
+      "port": 8970
+    }
+  ]
+}
