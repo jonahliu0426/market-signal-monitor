@@ -4,15 +4,31 @@
  */
 "use strict";
 
-/* ================= 主题色（dataviz 参考调色板 · 深色） ================= */
-const C = {
-  surface: "#1a1a19", page: "#0d0d0d",
-  ink: "#ffffff", ink2: "#c3c2b7", muted: "#898781",
-  grid: "#2c2c2a", axis: "#383835", border: "rgba(255,255,255,0.10)",
-  s1: "#3987e5", s2: "#d95926", s3: "#199e70",
-  good: "#0ca30c", warn: "#fab219", serious: "#ec835a",
-  crit: "#d03b3b", critSoft: "#e66767",
+/* ================= 主题色（dataviz 参考调色板 · 深/浅双档） =================
+ * 状态色（红黄绿）两档通用；系列色与界面色按主题切换。
+ * C 是可变引用：applyTheme 用 Object.assign 原地替换，所有图表在
+ * 下一次渲染时自动读到新值。 */
+const PALETTES = {
+  dark: {
+    surface: "#1a1a19", page: "#0d0d0d",
+    ink: "#ffffff", ink2: "#c3c2b7", muted: "#898781",
+    grid: "#2c2c2a", axis: "#383835", border: "rgba(255,255,255,0.10)",
+    tipBg: "#232322",
+    s1: "#3987e5", s2: "#d95926", s3: "#199e70",
+    good: "#0ca30c", warn: "#fab219", serious: "#ec835a",
+    crit: "#d03b3b", critSoft: "#e66767",
+  },
+  light: {
+    surface: "#fcfcfb", page: "#f9f9f7",
+    ink: "#0b0b0b", ink2: "#52514e", muted: "#898781",
+    grid: "#e1e0d9", axis: "#c3c2b7", border: "rgba(11,11,11,0.10)",
+    tipBg: "#ffffff",
+    s1: "#2a78d6", s2: "#eb6834", s3: "#1baf7a",
+    good: "#0ca30c", warn: "#fab219", serious: "#ec835a",
+    crit: "#d03b3b", critSoft: "#e34948",
+  },
 };
+const C = { ...PALETTES.dark };
 const LEVEL = {
   good:    { color: C.good,     ico: "●" },
   warn:    { color: C.warn,     ico: "▲" },
@@ -20,6 +36,26 @@ const LEVEL = {
   risk:    { color: C.critSoft, ico: "■" },
   info:    { color: C.muted,    ico: "◦" },
 };
+let themeMode = "dark";
+try { themeMode = localStorage.getItem("msm-theme") === "light" ? "light" : "dark"; } catch (e) {}
+
+function applyTheme(mode, rerender) {
+  themeMode = mode;
+  document.documentElement.dataset.theme = mode;
+  Object.assign(C, PALETTES[mode]);
+  LEVEL.good.color = C.good;
+  LEVEL.warn.color = C.warn;
+  LEVEL.serious.color = C.serious;
+  LEVEL.risk.color = C.critSoft;
+  LEVEL.info.color = C.muted;
+  try { localStorage.setItem("msm-theme", mode); } catch (e) {}
+  const btn = document.querySelector("#theme-toggle");
+  if (btn) btn.textContent = mode === "dark" ? "☀️ 浅色" : "🌙 深色";
+  if (rerender) {
+    INDICATORS.forEach((i) => { if (built[i.id]) updateCard(i); });
+    if (currentDetail) showDetail(currentDetail);
+  }
+}
 
 /* ================= 小工具 ================= */
 const $ = (sel) => document.querySelector(sel);
@@ -179,8 +215,12 @@ function baseAxes(dates, opts = {}) {
 function baseTooltip(valueFormatter) {
   return {
     trigger: "axis",
-    axisPointer: { type: "cross", label: { backgroundColor: "#333" }, crossStyle: { color: C.muted } },
-    backgroundColor: "#232322", borderColor: "rgba(255,255,255,0.14)",
+    axisPointer: {
+      type: "cross",
+      label: { backgroundColor: C.axis, color: C.ink },
+      crossStyle: { color: C.muted },
+    },
+    backgroundColor: C.tipBg, borderColor: C.border,
     textStyle: { color: C.ink2, fontSize: 12 },
     valueFormatter,
   };
@@ -242,7 +282,7 @@ function mergedTooltip(fmtV) {
     const p = (params || []).find((x) => x.value != null && !Number.isNaN(x.value));
     if (!p) return "";
     return p.axisValue + '<br/>' + p.marker + " " + p.seriesName +
-      ' &nbsp;<b style="color:#fff">' + fmtV(p.value) + "</b>";
+      ' &nbsp;<b style="color:' + C.ink + '">' + fmtV(p.value) + "</b>";
   };
   return t;
 }
@@ -1180,11 +1220,14 @@ function retryFailed() {
 }
 
 function boot() {
+  applyTheme(themeMode, false); // 在渲染任何内容前先套用已保存的主题
   renderNav();
   renderStrip();
   renderCardShell();
   $("#back-btn").onclick = showOverview;
   document.querySelector(".nav-overview").onclick = showOverview;
+  $("#theme-toggle").onclick = () =>
+    applyTheme(themeMode === "dark" ? "light" : "dark", true);
 
   dataMode.then((d) => {
     if (d.mode === "api") {
