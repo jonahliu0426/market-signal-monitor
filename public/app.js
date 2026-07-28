@@ -1091,6 +1091,14 @@ function showDetail(id) {
     n.classList.toggle("active", n.dataset.id === id);
   });
   $("#d-title").textContent = ind.name;
+  if (b.updated) {
+    const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
+      new Date(b.updated + "T00:00:00").getDay()];
+    $("#d-updated").innerHTML = "数据更新至 " + esc(b.updated) + "（" + wd + "）" +
+      (b.stale ? ' <span class="warn-txt">· ⚠ 上游暂不可用，显示缓存数据</span>' : "");
+  } else {
+    $("#d-updated").textContent = "";
+  }
   $("#d-subtitle").textContent = ind.subtitle;
   $("#d-badge").innerHTML = badgeHTML(b.signal);
   const rd = $("#d-readings");
@@ -1147,6 +1155,8 @@ function buildIndicator(ind) {
       if (b.note) notes.add(b.note);
       b.note = notes.size ? [...notes].join(" ") : undefined;
       b.stale = list.some((s) => s.stale);
+      // 数据更新日：取各依赖序列最后日期中最早的一个（最慢的组件截至哪天）
+      b.updated = list.map((s) => s.dates[s.dates.length - 1]).sort()[0];
       built[ind.id] = b;
       delete failed[ind.id];
       updateCard(ind);
