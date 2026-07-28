@@ -127,8 +127,17 @@ html, body { margin: 0; padding: 0; background: var(--page); color: var(--ink2);
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12.5px; font-weight: 600; padding: 4px 12px; border-radius: 999px;
   border: 1px solid; background: var(--surface-2); white-space: nowrap;
+  max-width: 100%; box-sizing: border-box;
 }
-.badge .ico { font-size: 11px; }
+.badge .ico { font-size: 11px; flex: 0 0 auto; }
+/* 超长文案在卡片里截断为省略号（悬停 title 显示全文）；详情页允许换行 */
+.badge .badge-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .c-bottom { min-width: 0; }
+/* min-width:0 允许徽章作为 flex 子项收缩到内容宽度以下，触发内部省略号 */
+.card .c-bottom .badge { flex: 0 1 auto; min-width: 0; }
+.card svg.spark { min-width: 56px; }
+#d-badge .badge { white-space: normal; }
+#d-badge .badge .badge-txt { white-space: normal; overflow: visible; }
 .badge.good    { color: var(--good);    border-color: color-mix(in srgb, var(--good) 45%, transparent); }
 .badge.warn    { color: var(--warn);    border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .badge.serious { color: var(--serious); border-color: color-mix(in srgb, var(--serious) 45%, transparent); }

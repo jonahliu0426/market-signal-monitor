@@ -1591,8 +1591,10 @@ const built = {};   // id → build() 结果
 const failed = {};  // id → error
 
 function badgeHTML(sig) {
-  const L = LEVEL[sig.level];
-  return `<span class="badge ${sig.level}"><span class="ico">${L.ico}</span>${sig.label}</span>`;
+  const lv = LEVEL[sig.level];
+  // title 属性提供悬停显示完整文案；.badge-txt 负责超长省略号截断
+  return `<span class="badge ${sig.level}" title="${esc(sig.label)}">` +
+    `<span class="ico">${lv.ico}</span><span class="badge-txt">${sig.label}</span></span>`;
 }
 function sparkSVG(values, color) {
   const vs = values.filter((v) => v != null);
