@@ -429,6 +429,7 @@ const INDICATORS = [
   {
     id: "icsa", group: "g1", name: "初请失业金人数", short: "初请失业金",
     subtitle: "每周首次申领失业保险人数 · 周频 · FRED: ICSA",
+    freq: "每周更新",
     deps: ["icsa"],
     build(S) {
       const { dates, values } = S.icsa;
@@ -586,6 +587,7 @@ const INDICATORS = [
   {
     id: "nfci", group: "g2", name: "金融条件指数（NFCI）", short: "金融条件",
     subtitle: "芝加哥联储全国金融条件指数 · 周频 · FRED: NFCI（替代 ISM/LEI 的免费综合指标）",
+    freq: "每周更新",
     deps: ["nfci"],
     build(S) {
       const { dates, values } = S.nfci;
@@ -1095,6 +1097,7 @@ function showDetail(id) {
     const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
       new Date(b.updated + "T00:00:00").getDay()];
     $("#d-updated").innerHTML = "数据更新至 " + esc(b.updated) + "（" + wd + "）" +
+      "（" + (ind.freq || "每日更新") + "）" +
       (b.stale ? ' <span class="warn-txt">· ⚠ 上游暂不可用，显示缓存数据</span>' : "");
   } else {
     $("#d-updated").textContent = "";
