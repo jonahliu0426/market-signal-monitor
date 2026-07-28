@@ -61,7 +61,8 @@ def main():
             print("  ✗ %s 无数据: %s" % (key, e))
             continue
         entry = {k: data[k] for k in
-                 ("dates", "values", "note", "source", "source_id", "fetched_at")
+                 ("dates", "values", "note", "source", "source_id", "fetched_at",
+                  "neutral", "bearish")
                  if k in data}
         if stale:
             entry["stale"] = True

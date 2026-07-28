@@ -354,6 +354,7 @@ const GROUPS = [
   { id: "g2", name: "宏观 · 参考价值 / 噪音大" },
   { id: "g3", name: "市场 · 动量（超额收益证据最强）" },
   { id: "g4", name: "市场 · 风控工具" },
+  { id: "g5", name: "情绪 · 证据很弱（仅参考）" },
 ];
 
 const SECTORS = [
@@ -1020,6 +1021,59 @@ const INDICATORS = [
       caveat: "用户原话：「勉强算半个」——把它当作动量证据链里权重最低的一环，不要单独据此行动。",
     },
     source: "数据：Cboe · SPX（1975 至今）；多资产为 Nasdaq 行情 API 的 ETF 未复权收盘价（近 10 年）。",
+  },
+
+  /* ---------- 12. AAII 散户情绪调查 ---------- */
+  {
+    id: "aaii", group: "g5", name: "AAII 散户情绪调查", short: "AAII情绪",
+    subtitle: "美国个人投资者协会周度调查：未来六个月看多/中性/看空占比 · 1987 至今",
+    freq: "每周更新",
+    deps: ["aaii"],
+    build(S) {
+      const { dates, values: bull } = S.aaii;
+      const neutral = S.aaii.neutral, bear = S.aaii.bearish;
+      const n = dates.length;
+      const spread = bull.map((b, i) => b - bear[i]);
+      const last = { b: bull[n - 1], n: neutral[n - 1], br: bear[n - 1], s: spread[n - 1] };
+      const pctl = percentile(spread, last.s);
+      let label = "情绪处于中性区间";
+      if (last.s >= 20) label = "极端乐观（反向读法偏谨慎，证据弱）";
+      else if (last.s <= -20) label = "极端悲观（反向读法偏积极，证据弱）";
+      return {
+        value: (last.s >= 0 ? "+" : "") + last.s.toFixed(1) + " pp",
+        delta: "多空差 · 看多 " + last.b.toFixed(1) + "% / 看空 " + last.br.toFixed(1) + "%",
+        readings: [
+          { label: "看多", value: fmt.pct(last.b, 1) },
+          { label: "中性", value: fmt.pct(last.n, 1) },
+          { label: "看空", value: fmt.pct(last.br, 1) },
+          { label: "多空差（历史分位）", value: (last.s >= 0 ? "+" : "") + last.s.toFixed(1) + " pp（" + pctl.toFixed(0) + "%）" },
+        ],
+        signal: { level: "info", label },
+        spark: { values: spread.slice(-104) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(dates, { yFmt: (v) => v + "%" }),
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(1) + "%")),
+            legend: { top: 2, right: 10, textStyle: { color: C.ink2, fontSize: 12 } },
+            grid: { left: 64, right: 20, top: 34, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: [
+              lineSeries("看多", bull, C.good),
+              lineSeries("中性", neutral, C.muted),
+              lineSeries("看空", bear, C.critSoft),
+            ],
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "美国个人投资者协会（AAII）自 1987 年起每周询问会员：未来六个月股市看多、中性还是看空。是历史最长的散户情绪连续序列，每周四更新。",
+      how: "常见用法是<b>反向读法且只看极端</b>：多空差（看多% − 看空%）低于 −20pp 的极端悲观历史上多次出现在阶段性底部附近（2009-03-05 看空 70.3% 为历史纪录，恰在市场大底当周）；高于 +20pp 的极端乐观则提示后续回报中位数偏低。中间地带没有信息量。",
+      caveat: "你自己的定位是对的：<b>散户情绪调查的反向指标用法，证据都很弱</b>——所以本指标归入单独分组、信号始终为灰色（信息性），不参与红绿灯。样本仅为 AAII 会员（偏年长、高净值美国散户），不能代表全体散户；周度噪音极大，请只看极端与趋势。",
+    },
+    source: "数据：AAII Investor Sentiment Survey 官方历史文件（sentiment.xls），周频（每周四更新），1987-07 至今。",
   },
 ];
 

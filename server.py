@@ -29,7 +29,8 @@ CACHE_DIR = os.path.join(ROOT, "data", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # 缓存时长（秒）：这些数据每天只更新一次，长缓存也能显著降低被上游风控的概率
-TTL_BY_SRC = {"fred": 12 * 3600, "cboe": 12 * 3600, "nasdaq": 6 * 3600}
+TTL_BY_SRC = {"fred": 12 * 3600, "cboe": 12 * 3600, "nasdaq": 6 * 3600,
+              "aaii": 24 * 3600}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -66,6 +67,8 @@ SERIES = {
     "nfci":    {"src": "fred", "id": "NFCI",         "cosd": "1985-01-01"},
     # ---- Cboe 指数 ----
     "spx":     {"src": "cboe", "id": "SPX"},
+    # ---- AAII 散户情绪调查（周频，1987 至今；单 key 含三条分项序列） ----
+    "aaii":    {"src": "aaii"},
     # ---- Nasdaq ETF（近 10 年，未复权） ----
     **{k: {"src": "nasdaq", "id": k.upper()} for k in [
         "spy", "qqq", "rsp", "mtum", "tlt", "gld", "eem",
@@ -105,13 +108,13 @@ def _pace(host, interval):
             gate[1] = time.time()
 
 
-def http_get(url, headers=None, timeout=30, ua=None):
-    """用系统 curl 抓取上游数据。
+def http_get_bytes(url, headers=None, timeout=30, ua=None):
+    """用系统 curl 抓取上游数据（原始字节）。
 
     重要教训：FRED 的 CDN（Akamai）会校验 TLS 指纹与 User-Agent 是否匹配——
     非浏览器客户端伪装 Chrome UA 会被直接拒绝（连接挂起或 HTTP/2 流错误），
-    而用 curl 默认 UA 反而一切正常。所以默认不设置 UA；只有 Nasdaq 的
-    接口需要浏览器式头部（ua 参数显式传入）。
+    而用 curl 默认 UA 反而一切正常。所以默认不设置 UA；只有 Nasdaq 与
+    AAII 的接口需要浏览器式头部（ua 参数显式传入）。
     """
     cmd = ["/usr/bin/curl", "-sS", "-f", "--compressed",
            "--max-time", str(int(timeout)), "--config", "-"]
@@ -129,16 +132,21 @@ def http_get(url, headers=None, timeout=30, ua=None):
         err = proc.stderr.decode("utf-8", "replace").strip().splitlines()
         raise RuntimeError("抓取失败(exit %d): %s"
                            % (proc.returncode, err[-1] if err else url.split("?")[0]))
-    return proc.stdout.decode("utf-8", errors="replace")
+    return proc.stdout
 
 
-def http_get_retry(url, headers=None, timeout=30, pause=2.5, ua=None):
+def http_get(url, headers=None, timeout=30, ua=None):
+    return http_get_bytes(url, headers, timeout, ua).decode("utf-8", errors="replace")
+
+
+def http_get_retry(url, headers=None, timeout=30, pause=2.5, ua=None, binary=False):
     """失败后温和地重试一次（间隔 pause 秒），避免重试风暴加剧风控。"""
+    fn = http_get_bytes if binary else http_get
     try:
-        return http_get(url, headers, timeout, ua)
+        return fn(url, headers, timeout, ua)
     except RuntimeError:
         time.sleep(pause)
-        return http_get(url, headers, timeout, ua)
+        return fn(url, headers, timeout, ua)
 
 
 def mdy_to_iso(s):
@@ -248,20 +256,39 @@ def fetch_nasdaq(symbol):
         "未复权收盘价：含分红资产（债券/高股息 ETF）的长期动量会被略微低估。"
 
 
+def fetch_aaii():
+    """AAII 官方 sentiment.xls：values=看多%，另附 neutral/bearish 两列。"""
+    import aaii_xls
+    with _pace("www.aaii.com", 1.0):
+        raw = http_get_retry(
+            "https://www.aaii.com/files/surveys/sentiment.xls",
+            headers={
+                "Accept": ("text/html,application/xhtml+xml,application/xml;"
+                           "q=0.9,*/*;q=0.8"),
+                "Accept-Language": "en-US,en;q=0.9",
+            }, ua=UA, binary=True)
+    dates, bull, neutral, bear = aaii_xls.parse_sentiment(raw)
+    return dates, bull, {"neutral": neutral, "bearish": bear}
+
+
 def fetch_series(key):
     spec = SERIES[key]
+    extra = {}
     if spec["src"] == "fred":
         dates, values, note = fetch_fred(spec["id"], spec["cosd"])
     elif spec["src"] == "cboe":
         dates, values, note = fetch_cboe(spec["id"])
+    elif spec["src"] == "aaii":
+        dates, values, extra = fetch_aaii()
+        note = ""
     else:
         dates, values, note = fetch_nasdaq(spec["id"])
     if not dates:
         raise RuntimeError("空数据: " + key)
     return {
-        "key": key, "source": spec["src"], "source_id": spec["id"],
+        "key": key, "source": spec["src"], "source_id": spec.get("id", key),
         "dates": dates, "values": values, "note": note,
-        "fetched_at": int(time.time()),
+        "fetched_at": int(time.time()), **extra,
     }
 
 
