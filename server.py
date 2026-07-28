@@ -30,7 +30,8 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 # 缓存时长（秒）：这些数据每天只更新一次，长缓存也能显著降低被上游风控的概率
 TTL_BY_SRC = {"fred": 12 * 3600, "cboe": 12 * 3600, "nasdaq": 6 * 3600,
-              "aaii": 24 * 3600}
+              "aaii": 24 * 3600, "cot": 24 * 3600, "naaim": 24 * 3600,
+              "finra": 24 * 3600}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -69,6 +70,12 @@ SERIES = {
     "spx":     {"src": "cboe", "id": "SPX"},
     # ---- AAII 散户情绪调查（周频，1987 至今；单 key 含三条分项序列） ----
     "aaii":    {"src": "aaii"},
+    # ---- 其他情绪/仓位类 ----
+    "skew":    {"src": "cboe", "id": "SKEW"},
+    "umcsent": {"src": "fred", "id": "UMCSENT", "cosd": "1952-11-01"},
+    "cot":     {"src": "cot"},     # CFTC E-mini 标普投机者净头寸
+    "naaim":   {"src": "naaim"},   # NAAIM 主动管理人股票敞口
+    "finra_margin": {"src": "finra"},  # FINRA 融资余额（月频）
     # ---- Nasdaq ETF（近 10 年，未复权） ----
     **{k: {"src": "nasdaq", "id": k.upper()} for k in [
         "spy", "qqq", "rsp", "mtum", "tlt", "gld", "eem",
@@ -271,6 +278,99 @@ def fetch_aaii():
     return dates, bull, {"neutral": neutral, "bearish": bear}
 
 
+def fetch_cot():
+    """CFTC COT（Legacy）：E-mini 标普 500 非商业净头寸占未平仓量 %。周频。"""
+    url = ("https://publicreporting.cftc.gov/resource/6dca-aqww.json?"
+           + urllib.parse.urlencode({
+               "cftc_contract_market_code": "13874A",
+               "$select": ("report_date_as_yyyy_mm_dd,noncomm_positions_long_all,"
+                           "noncomm_positions_short_all,open_interest_all"),
+               "$order": "report_date_as_yyyy_mm_dd",
+               "$limit": "9000",
+           }))
+    with _pace("publicreporting.cftc.gov", 0.5):
+        arr = json.loads(http_get_retry(url))
+    if not isinstance(arr, list) or len(arr) < 500:
+        raise RuntimeError("CFTC 返回异常（%s 条）" % (len(arr) if isinstance(arr, list) else "?"))
+    dates, values = [], []
+    for row in arr:
+        try:
+            oi = float(row["open_interest_all"])
+            if oi <= 0:
+                continue
+            net = (float(row["noncomm_positions_long_all"])
+                   - float(row["noncomm_positions_short_all"])) / oi * 100
+            dates.append(row["report_date_as_yyyy_mm_dd"][:10])
+            values.append(round(net, 2))
+        except (KeyError, ValueError, TypeError):
+            continue
+    if (date.today() - date.fromisoformat(dates[-1])).days > 21:
+        raise RuntimeError("CFTC 最新数据过旧: " + dates[-1])
+    return dates, values, "统计截至每周二，CFTC 于周五发布。"
+
+
+def fetch_naaim():
+    """NAAIM 主动管理人股票敞口指数（周频，2006 至今）。
+
+    数据文件 URL 每周变化，先抓页面正则出当期 xlsx 链接再下载解析。"""
+    import xlsx_mini
+    with _pace("naaim.org", 1.0):
+        page = http_get_retry(
+            "https://naaim.org/programs/naaim-exposure-index/",
+            headers={"Accept": "text/html,*/*;q=0.8",
+                     "Accept-Language": "en-US,en;q=0.9"}, ua=UA)
+        import re as _re
+        m = _re.search(r'href="(https://naaim\.org/wp-content/uploads/[^"]+?\.xlsx)"', page)
+        if not m:
+            raise RuntimeError("NAAIM 页面上找不到数据文件链接（页面结构可能已变）")
+        raw = http_get_retry(m.group(1), headers={"Accept": "*/*"}, ua=UA, binary=True)
+    epoch = date(1899, 12, 30)
+    seen = {}
+    for r in xlsx_mini.rows(raw):
+        d, v = r.get("A"), r.get("B")
+        if not isinstance(d, float) or not isinstance(v, float):
+            continue  # 表头/杂项行
+        if not (38000 < d < 60000 and -250 <= v <= 350):
+            continue
+        seen[(epoch + timedelta(days=int(d))).isoformat()] = round(v, 2)
+    dates = sorted(seen)
+    if len(dates) < 800:
+        raise RuntimeError("NAAIM 解析行数异常（%d）" % len(dates))
+    if (date.today() - date.fromisoformat(dates[-1])).days > 21:
+        raise RuntimeError("NAAIM 最新数据过旧: " + dates[-1])
+    return dates, [seen[d] for d in dates], "每周三统计，周四前后发布。"
+
+
+def fetch_finra_margin():
+    """FINRA 客户融资余额（月频，1997 至今，单位百万美元）。
+
+    注意：finra.org 与 FRED 同一脾气——浏览器 UA + 非浏览器 TLS 会被拦，
+    必须用 curl 默认 UA。"""
+    import xlsx_mini
+    with _pace("www.finra.org", 1.0):
+        raw = http_get_retry(
+            "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx",
+            binary=True)
+    seen = {}
+    for r in xlsx_mini.rows(raw):
+        d, v = r.get("A"), r.get("B")
+        if not isinstance(d, str) or not isinstance(v, float):
+            continue
+        d = d.strip()
+        # 月份限 1-12、余额限 5万~2000万（百万美元）：双重防护标签/脚注行混入
+        if (len(d) == 7 and d[4] == "-" and d[:4].isdigit() and d[5:7].isdigit()
+                and 1 <= int(d[5:7]) <= 12 and 5e4 <= v <= 2e7):
+            seen[d + "-01"] = v  # 记在当月月初
+    dates = sorted(seen)
+    if len(dates) < 300:
+        raise RuntimeError("FINRA 解析行数异常（%d）" % len(dates))
+    # 阈值 100 天：数据记在月初、代表月末余额、发布再滞后约一个月，
+    # 最坏情形（下月数据发布前夕）距离戳记日期可达 ~85 天
+    if (date.today() - date.fromisoformat(dates[-1])).days > 100:
+        raise RuntimeError("FINRA 最新数据过旧: " + dates[-1])
+    return dates, [seen[d] for d in dates], "月频，月末数据约有一个月发布滞后。"
+
+
 def fetch_series(key):
     spec = SERIES[key]
     extra = {}
@@ -281,6 +381,12 @@ def fetch_series(key):
     elif spec["src"] == "aaii":
         dates, values, extra = fetch_aaii()
         note = ""
+    elif spec["src"] == "cot":
+        dates, values, note = fetch_cot()
+    elif spec["src"] == "naaim":
+        dates, values, note = fetch_naaim()
+    elif spec["src"] == "finra":
+        dates, values, note = fetch_finra_margin()
     else:
         dates, values, note = fetch_nasdaq(spec["id"])
     if not dates:

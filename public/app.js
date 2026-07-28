@@ -354,7 +354,7 @@ const GROUPS = [
   { id: "g2", name: "宏观 · 参考价值 / 噪音大" },
   { id: "g3", name: "市场 · 动量（超额收益证据最强）" },
   { id: "g4", name: "市场 · 风控工具" },
-  { id: "g5", name: "情绪 · 证据很弱（仅参考）" },
+  { id: "g5", name: "情绪与仓位 · 证据弱（仅参考）" },
 ];
 
 const SECTORS = [
@@ -1074,6 +1074,276 @@ const INDICATORS = [
       caveat: "你自己的定位是对的：<b>散户情绪调查的反向指标用法，证据都很弱</b>——所以本指标归入单独分组、信号始终为灰色（信息性），不参与红绿灯。样本仅为 AAII 会员（偏年长、高净值美国散户），不能代表全体散户；周度噪音极大，请只看极端与趋势。",
     },
     source: "数据：AAII Investor Sentiment Survey 官方历史文件（sentiment.xls），周频（每周四更新），1987-07 至今。",
+  },
+
+  /* ---------- 13. CFTC 期货持仓 ---------- */
+  {
+    id: "cot", group: "g5", name: "标普期货投机者净头寸（COT）", short: "期货持仓",
+    subtitle: "CFTC 持仓报告 · E-mini 标普500 非商业净头寸 ÷ 未平仓量 · 1997 至今",
+    freq: "每周更新",
+    deps: ["cot"],
+    build(S) {
+      const { dates, values } = S.cot;
+      const last = values[values.length - 1];
+      const pctl = percentile(values, last);
+      const d13 = idxOffset(values, 13);
+      const chg = d13 == null ? null : last - d13;
+      let label = (last >= 0 ? "投机者净多" : "投机者净空") + "，处于中性区间";
+      if (pctl >= 90) label = "投机净多处于历史高位（仅参考）";
+      else if (pctl <= 10) label = "投机净空处于历史高位（仅参考）";
+      return {
+        value: (last >= 0 ? "+" : "") + last.toFixed(2) + "% OI",
+        delta: "历史分位 " + pctl.toFixed(0) + "% · 13周 " + (chg == null ? "—" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "pp"),
+        readings: [
+          { label: "净头寸（占未平仓量）", value: (last >= 0 ? "+" : "") + last.toFixed(2) + "%" },
+          { label: "1997年以来分位", value: pctl.toFixed(0) + "%" },
+          { label: "13周（一季度）变化", value: chg == null ? "—" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + " pp" },
+        ],
+        signal: { level: "info", label },
+        spark: { values: values.slice(-104) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(dates, { yFmt: (v) => v + "%" }),
+            tooltip: mergedTooltip((v) => (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%"),
+            grid: { left: 64, right: 20, top: 26, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: polarityPair("投机者净头寸 %OI", values, 0, C.s1, C.critSoft,
+              { markLine: markLineAt([0]) }),
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "CFTC 每周五发布的持仓报告（COT），追踪投机性资金（非商业头寸）在 E-mini 标普 500 期货的净多空方向。它是少有的「看真实仓位、不问观点」的情绪代理。",
+      how: "反向读法只看极端分位：净多拥挤（>90% 分位）提示多头出清风险，净空极端时空头回补可能助推反弹。绝对占比通常只有个位数百分点，方向与变化比水平更有意义。",
+      caveat: "股指期货上的证据明显弱于商品/外汇——指数期货持仓被对冲需求与基差交易（basis trade）严重污染，近年投机净空常年偏大并非看空股市。数据每周二统计、周五发布，有三天滞后。",
+    },
+    source: "数据：CFTC Commitments of Traders（Legacy Futures Only）官方公开 API · E-mini S&P 500（代码 13874A），周频，1997 至今。",
+  },
+
+  /* ---------- 14. 密歇根消费者信心 ---------- */
+  {
+    id: "umcsent", group: "g5", name: "密歇根大学消费者信心指数", short: "消费信心",
+    subtitle: "University of Michigan Consumer Sentiment · 月频 · FRED: UMCSENT · 1952 至今",
+    freq: "每月更新",
+    deps: ["umcsent"],
+    build(S) {
+      const { dates, values } = S.umcsent;
+      const last = values[values.length - 1];
+      const pctl = percentile(values, last);
+      const d12 = idxOffset(values, 12);
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      let label = "信心处于中性区间";
+      if (pctl <= 15) label = "信心极度低迷（历史上远期回报偏高的区域，弱证据）";
+      else if (pctl >= 85) label = "信心高涨（历史上远期回报偏低的区域，弱证据）";
+      return {
+        value: last.toFixed(1),
+        delta: "历史分位 " + pctl.toFixed(0) + "% · 12个月前 " + (d12 == null ? "—" : d12.toFixed(1)),
+        readings: [
+          { label: "当前指数", value: last.toFixed(1) },
+          { label: "1952年以来分位", value: pctl.toFixed(0) + "%" },
+          { label: "长期均值", value: mean.toFixed(1) },
+        ],
+        signal: { level: "info", label },
+        spark: { values: values.slice(-60) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(dates, { yFmt: (v) => v }),
+            tooltip: baseTooltip((v) => Number(v).toFixed(1)),
+            grid: { left: 64, right: 30, top: 26, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: [{
+              ...lineSeries("消费者信心指数", values, C.s1),
+              areaStyle: { color: C.s1, opacity: 0.08 },
+              markLine: markLineAt([Math.round(mean)], (p) => "均值 " + p.value),
+            }],
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "1952 年至今最长的家庭部门情绪连续序列，每月由密歇根大学调查。反映消费者对自身财务与经济前景的感受，对通胀和油价冲击尤其敏感。",
+      how: "对股市的用法同样是反向、只看极端：信心极端低迷的月份（1980、2008-09、2011、2022 等）之后，股市远期回报的历史中位数明显偏高——情绪冰点往往意味着坏消息已在价格里。高涨区域则相反但更弱。",
+      caveat: "它测的是家庭感受而非市场仓位，与股市的联动是间接的。FRED 只收录月度终值，比初值晚约一个月；月频序列对短窗口（1月/3月）几乎没有可看内容。",
+    },
+    source: "数据：FRED · University of Michigan Consumer Sentiment（UMCSENT），月频，1952-11 至今（约一个月发布滞后）。",
+  },
+
+  /* ---------- 15. NAAIM 管理人仓位 ---------- */
+  {
+    id: "naaim", group: "g5", name: "NAAIM 主动管理人股票敞口", short: "管理人仓位",
+    subtitle: "NAAIM Exposure Index · 会员实际组合的股票敞口（-200% ~ +200%）· 2006 至今",
+    freq: "每周更新",
+    deps: ["naaim"],
+    build(S) {
+      const { dates, values } = S.naaim;
+      const last = values[values.length - 1];
+      const pctl = percentile(values, last);
+      const ma4arr = sma(values, 4);
+      const ma4 = ma4arr[ma4arr.length - 1];
+      let label = "管理人仓位中性";
+      if (pctl >= 90) label = "管理人仓位拥挤（高敞口，仅参考）";
+      else if (pctl <= 10) label = "管理人仓位极低（仅参考）";
+      return {
+        value: last.toFixed(0) + "%",
+        delta: "4周均线 " + (ma4 == null ? "—" : ma4.toFixed(0) + "%") + " · 历史分位 " + pctl.toFixed(0) + "%",
+        readings: [
+          { label: "当前平均敞口", value: last.toFixed(1) + "%" },
+          { label: "4周均线", value: ma4 == null ? "—" : ma4.toFixed(1) + "%" },
+          { label: "2006年以来分位", value: pctl.toFixed(0) + "%" },
+        ],
+        signal: { level: "info", label },
+        spark: { values: values.slice(-104) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(dates, { yFmt: (v) => v + "%" }),
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(1) + "%")),
+            legend: { top: 2, right: 10, textStyle: { color: C.ink2, fontSize: 12 } },
+            grid: { left: 64, right: 20, top: 34, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: [
+              lineSeries("周度敞口", values, C.muted, { lineStyle: { width: 1.2, color: C.muted, opacity: 0.7 } }),
+              lineSeries("4周均线", ma4arr, C.s1),
+            ],
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "全美主动投资管理人协会（NAAIM）每周三调查会员的<b>实际组合股票敞口</b>：0 = 空仓，100 = 满仓，200 = 两倍杠杆做多，负值 = 净做空。与 AAII 问「观点」不同，它问的是「仓位」。",
+      how: "反向读法看极端：敞口挤到 100 上方（杠杆化乐观）后市场短期回报中位数偏低；敞口跌到 20 以下的恐慌区多次与阶段性底部重叠（2008-10、2020-03、2022-09）。周度噪音极大，看 4 周均线。",
+      caveat: "样本只有约 200 家中小型主动管理机构，2006 年才开始，未经历完整的长周期检验；学术层面没有可靠的预测力证据——与本组其他指标一样，只作情绪温度计。",
+    },
+    source: "数据：NAAIM Exposure Index 官方历史文件（每周更新，文件链接每期变化、自动从官网解析），周频，2006-07 至今。",
+  },
+
+  /* ---------- 16. Cboe SKEW ---------- */
+  {
+    id: "skew", group: "g5", name: "Cboe SKEW 指数（尾部风险定价）", short: "SKEW",
+    subtitle: "由深虚值标普期权价格推算的隐含偏度 · 日频 · 1990 至今",
+    freq: "每日更新",
+    deps: ["skew"],
+    build(S) {
+      const { dates, values } = S.skew;
+      const last = values[values.length - 1];
+      const pctl = percentile(values, last);
+      const ma20arr = sma(values, 20);
+      const ma20 = ma20arr[ma20arr.length - 1];
+      let label = "尾部保护需求中性";
+      if (pctl >= 90) label = "尾部保护需求偏高（为暴跌付高溢价）";
+      else if (pctl <= 10) label = "尾部保护需求偏低";
+      return {
+        value: last.toFixed(1),
+        delta: "20日均线 " + (ma20 == null ? "—" : ma20.toFixed(1)) + " · 历史分位 " + pctl.toFixed(0) + "%",
+        readings: [
+          { label: "当前 SKEW", value: last.toFixed(2) },
+          { label: "20日均线", value: ma20 == null ? "—" : ma20.toFixed(1) },
+          { label: "1990年以来分位", value: pctl.toFixed(0) + "%" },
+        ],
+        signal: { level: "info", label },
+        spark: { values: values.slice(-252) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(dates, { yFmt: (v) => v }),
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(1))),
+            legend: { top: 2, right: 10, textStyle: { color: C.ink2, fontSize: 12 } },
+            grid: { left: 64, right: 20, top: 34, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: [
+              lineSeries("SKEW", values, C.muted, { lineStyle: { width: 1.2, color: C.muted, opacity: 0.7 } }),
+              lineSeries("20日均线", ma20arr, C.s1),
+            ],
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "Cboe 用深虚值标普期权价格反推的隐含偏度指数：100 = 收益分布无偏斜，数值越高表示市场为「暴跌保护」支付的相对溢价越高。典型区间约 110–160。",
+      how: "高 SKEW = 尾部对冲需求旺盛（未必看空，可能是仓位重所以买保险）；低 SKEW = 市场对崩盘定价便宜。与 VIX 期限结构互补：VIX 管「近期波动预期」，SKEW 管「极端下跌的相对定价」。",
+      caveat: "对后续收益或暴跌概率的预测力，学术检验结论基本是<b>无效或非常弱</b>——放在本组仅作观察。深虚值期权流动性差，读数本身噪音也大。",
+    },
+    source: "数据：Cboe · SKEW Index 官方日线历史（1990 至今）。",
+  },
+
+  /* ---------- 17. FINRA 融资余额 ---------- */
+  {
+    id: "finra_margin", group: "g5", name: "融资余额（FINRA 保证金债务）", short: "融资余额",
+    subtitle: "经纪商客户保证金账户借款总额 · 月频 · 1997 至今",
+    freq: "每月更新",
+    deps: ["finra_margin"],
+    build(S) {
+      const { dates, values } = S.finra_margin;
+      const n = values.length;
+      const last = values[n - 1];
+      const yoyAll = values.map((v, i) => (i >= 12 ? (v / values[i - 12] - 1) * 100 : null));
+      const yoyDates = dates.slice(12);
+      const yoyVals = yoyAll.slice(12);
+      const yoy = yoyVals[yoyVals.length - 1];
+      const yoyClean = yoyVals.filter((v) => v != null);
+      const pctl = percentile(yoyClean, yoy);
+      let label = "杠杆水平变化中性";
+      if (yoy >= 40) label = "杠杆快速扩张（历史顶部前常见，弱证据）";
+      else if (yoy <= -20) label = "去杠杆进行中（多与底部区域重叠，滞后）";
+      return {
+        value: (last / 1e6).toFixed(2) + " 万亿$",
+        delta: "同比 " + fmt.pctS(yoy) + " · 增速分位 " + pctl.toFixed(0) + "%",
+        readings: [
+          { label: "最新余额", value: (last / 1e6).toFixed(3) + " 万亿美元" },
+          { label: "同比增速", value: fmt.pctS(yoy) },
+          { label: "增速历史分位", value: pctl.toFixed(0) + "%" },
+        ],
+        signal: { level: "info", label },
+        spark: { values: values.slice(-60) },
+        tallChart: true,
+        renderChart(node) {
+          const c = echarts.init(node);
+          const lvl = dates.map((_, i) => Number((values[i] / 1e6).toFixed(4)));
+          c.setOption({
+            title: [
+              { text: "融资余额（万亿美元）", top: 8, left: 70, textStyle: { fontSize: 12, color: C.ink2, fontWeight: 600 } },
+              { text: "同比增速（%）· 顶部前的极端加杠杆更值得留意", top: "56%", left: 70, textStyle: { fontSize: 12, color: C.ink2, fontWeight: 600 } },
+            ],
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(2))),
+            axisPointer: { link: [{ xAxisIndex: "all" }] },
+            grid: [
+              { left: 70, right: 20, top: 36, height: "38%" },
+              { left: 70, right: 20, top: "63%", height: "20%" },
+            ],
+            xAxis: [
+              { type: "category", boundaryGap: false, data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
+              { type: "category", boundaryGap: false, data: dates, gridIndex: 1, axisLabel: { color: C.muted, fontSize: 11, formatter: (v) => v.slice(0, 7) }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
+            ],
+            yAxis: [
+              { type: "value", scale: true, gridIndex: 0, splitLine: { lineStyle: { color: C.grid } }, axisLabel: { color: C.muted, fontSize: 11 } },
+              { type: "value", scale: true, gridIndex: 1, splitLine: { lineStyle: { color: C.grid } }, axisLabel: { color: C.muted, fontSize: 11, formatter: (v) => v + "%" } },
+            ],
+            dataZoom: [
+              { type: "inside", xAxisIndex: [0, 1], filterMode: "filter", zoomOnMouseWheel: "ctrl", moveOnMouseMove: true },
+              { ...baseZoom([0, 1])[1] },
+            ],
+            series: [
+              { ...lineSeries("融资余额", lvl, C.s1), xAxisIndex: 0, yAxisIndex: 0, areaStyle: { color: C.s1, opacity: 0.08 } },
+              { ...lineSeries("同比增速", yoyAll, C.s2), xAxisIndex: 1, yAxisIndex: 1, markLine: markLineAt([0], (p) => p.value + "%") },
+            ],
+          });
+          return { chart: c, dates };
+        },
+      };
+    },
+    desc: {
+      what: "FINRA 汇总的经纪商客户保证金账户借款（margin debt），衡量美股市场的显性杠杆水平，1997 年至今月频。",
+      how: "绝对水平随市值自然增长，本身没有信息量；看<b>同比增速的极端</b>：1999-2000、2007、2021 的顶部之前都出现过 +40% 以上的加杠杆狂潮；深度去杠杆（-20% 以下）则多与熊市中后段重叠——偏同步略滞后，不是领先信号。",
+      caveat: "发布滞后约一个月（图表右端永远缺最近一个月）；只覆盖持牌经纪商的保证金借款，衍生品与场外杠杆不在其中，实际总杠杆被低估。",
+    },
+    source: "数据：FINRA Margin Statistics 官方历史文件，月频，1997-01 至今（约一个月发布滞后）。",
   },
 ];
 
