@@ -27,6 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 安装 PDF 解析工具（IBKR 月度指标为 PDF 新闻稿）
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
       - name: 构建数据包
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

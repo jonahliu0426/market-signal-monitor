@@ -15,8 +15,11 @@ import gzip
 import io
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -31,7 +34,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # 缓存时长（秒）：这些数据每天只更新一次，长缓存也能显著降低被上游风控的概率
 TTL_BY_SRC = {"fred": 12 * 3600, "cboe": 12 * 3600, "nasdaq": 6 * 3600,
               "aaii": 24 * 3600, "cot": 24 * 3600, "naaim": 24 * 3600,
-              "finra": 24 * 3600}
+              "finra": 24 * 3600, "ibkr": 24 * 3600}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -76,6 +79,9 @@ SERIES = {
     "cot":     {"src": "cot"},     # CFTC E-mini 标普投机者净头寸
     "naaim":   {"src": "naaim"},   # NAAIM 主动管理人股票敞口
     "finra_margin": {"src": "finra"},  # FINRA 融资余额（月频）
+    # IBKR 客户保证金贷款（月频，次月1-3日即发布，作为 FINRA 的前哨；
+    # accumulate：官方仅稳定提供最新一期 PDF，历史靠逐月累积+首次回填）
+    "ibkr_margin": {"src": "ibkr", "accumulate": True},
     # ---- Nasdaq ETF（近 10 年，未复权） ----
     **{k: {"src": "nasdaq", "id": k.upper()} for k in [
         "spy", "qqq", "rsp", "mtum", "tlt", "gld", "eem",
@@ -371,6 +377,89 @@ def fetch_finra_margin():
     return dates, [seen[d] for d in dates], "月频，月末数据约有一个月发布滞后。"
 
 
+def pdf_to_text(raw):
+    """PDF → 文本：优先 pdftotext（CI 的 ubuntu 装 poppler-utils），
+    退回 macOS 系统自带的 PDFKit（osascript/JXA），两个环境都零 pip 依赖。"""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        f.write(raw)
+        path = f.name
+    try:
+        if shutil.which("pdftotext"):
+            p = subprocess.run(["pdftotext", "-q", path, "-"],
+                               capture_output=True, timeout=30)
+            if p.returncode == 0 and p.stdout.strip():
+                return p.stdout.decode("utf-8", "replace")
+        if sys.platform == "darwin":
+            jxa = ('ObjC.import("Quartz");'
+                   'const d=$.PDFDocument.alloc.initWithURL('
+                   '$.NSURL.fileURLWithPath("%s"));d.string.js' % path)
+            p = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", jxa],
+                               capture_output=True, timeout=30)
+            if p.returncode == 0 and p.stdout.strip():
+                return p.stdout.decode("utf-8", "replace")
+        raise RuntimeError("无可用的 PDF 文本提取器（Linux 需 pdftotext，macOS 用系统 PDFKit）")
+    finally:
+        os.unlink(path)
+
+
+_MONTHS_EN = {m: i + 1 for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June", "July",
+     "August", "September", "October", "November", "December"])}
+
+
+def _parse_ibkr_pdf(raw):
+    """从 IBKR 月度指标新闻稿 PDF 提取 (数据月份YYYY-MM-01, 保证金贷款$B)。"""
+    text = pdf_to_text(raw)
+    mm = re.search(r"(?:Information\s+)?for\s+(%s)\s+(\d{4})" % "|".join(_MONTHS_EN), text)
+    bal = re.search(r"margin loan balances of\s+\$([\d,.]+)\s+billion", text, re.I)
+    if not mm or not bal:
+        raise RuntimeError("IBKR PDF 解析失败（新闻稿格式可能已变）")
+    key = "%04d-%02d-01" % (int(mm.group(2)), _MONTHS_EN[mm.group(1)])
+    val = float(bal.group(1).replace(",", ""))
+    if not 5 <= val <= 2000:
+        raise RuntimeError("IBKR 保证金贷款数值可疑: %s" % val)
+    return key, val
+
+
+def fetch_ibkr():
+    """IBKR 客户保证金贷款（$B）。总是抓最新一期；历史不足 13 个月时
+    按 YYYYMMMetricsPressRelease.pdf 命名规律回填（发布月 = 数据月+1）。"""
+    seen = {}
+    with _pace("www.interactivebrokers.com", 1.2):
+        raw = http_get_retry(
+            "https://www.interactivebrokers.com/mkt/getFileNew.php?file=latestMetricPR",
+            binary=True)
+    k, v = _parse_ibkr_pdf(raw)
+    seen[k] = v
+
+    cache_path = os.path.join(CACHE_DIR, "ibkr_margin.json")
+    have = 0
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                have = len(json.load(f).get("dates", []))
+        except Exception:
+            pass
+    if have < 13:  # 首次运行：回填最近约 14 个月供前端校准与 FINRA 的相关性
+        y, m = int(k[:4]), int(k[5:7])
+        for _ in range(14):
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+            rel_y, rel_m = (y, m + 1) if m < 12 else (y + 1, 1)
+            url = ("https://www.interactivebrokers.com/mkt/getFileNew.php?"
+                   "file=%04d%02dMetricsPressRelease.pdf" % (rel_y, rel_m))
+            try:
+                with _pace("www.interactivebrokers.com", 1.2):
+                    kk, vv = _parse_ibkr_pdf(http_get_retry(url, binary=True))
+                seen[kk] = vv
+            except Exception as e:
+                sys.stderr.write("IBKR 回填 %04d-%02d 失败: %s\n" % (y, m, e))
+    dates = sorted(seen)
+    return dates, [seen[d] for d in dates], \
+        "IBKR 客户保证金贷款（十亿美元），次月 1-3 日发布，作为 FINRA 的前哨参考。"
+
+
 def fetch_series(key):
     spec = SERIES[key]
     extra = {}
@@ -387,6 +476,8 @@ def fetch_series(key):
         dates, values, note = fetch_naaim()
     elif spec["src"] == "finra":
         dates, values, note = fetch_finra_margin()
+    elif spec["src"] == "ibkr":
+        dates, values, note = fetch_ibkr()
     else:
         dates, values, note = fetch_nasdaq(spec["id"])
     if not dates:

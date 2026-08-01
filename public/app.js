@@ -161,6 +161,8 @@ const NOTE_I18N = [
    "Surveyed each Wednesday, published around Thursday."],
   ["月频，月末数据约有一个月发布滞后。",
    "Monthly; month-end figures are published with roughly a one-month lag."],
+  ["IBKR 客户保证金贷款（十亿美元），次月 1-3 日发布，作为 FINRA 的前哨参考。",
+   "IBKR client margin loans ($B), published on the 1st–3rd of the following month — a sentinel for FINRA."],
 ];
 function translateNote(note) {
   if (LANG === "zh" || !note) return note;
@@ -1512,48 +1514,142 @@ function makeIndicators() { return [
     subtitle: L("经纪商客户保证金账户借款总额 · 月频 · 1997 至今",
       "Total customer margin-account borrowing at broker-dealers · monthly · since 1997"),
     freq: "每月更新",
-    deps: ["finra_margin"],
+    deps: ["finra_margin", "spx"],
+    optionalDeps: ["ibkr_margin"],
     build(S) {
       const { dates, values } = S.finra_margin;
       const n = values.length;
       const last = values[n - 1];
       const yoyAll = values.map((v, i) => (i >= 12 ? (v / values[i - 12] - 1) * 100 : null));
-      const yoyDates = dates.slice(12);
-      const yoyVals = yoyAll.slice(12);
-      const yoy = yoyVals[yoyVals.length - 1];
-      const yoyClean = yoyVals.filter((v) => v != null);
+      const yoy = yoyAll[n - 1];
+      const yoyClean = yoyAll.filter((v) => v != null);
       const pctl = percentile(yoyClean, yoy);
+
+      /* —— 现时预估（nowcast）——
+       * 官方数据滞后约 1-2 个月。回测（1997-2026，样本外233个月）：
+       * Δlog(余额) ≈ α + β×标普月度对数收益，月均误差 2.7%，优于"不变假设"的 3.5%；
+       * 凸性/滞后修正项均无样本外增益，故弃用。可选叠加 IBKR 前哨
+       * （次月1-3日发布，与 FINRA 月度变化相关性 0.77）对齐后各取一半权重。 */
+      const ols1 = (oys, oxs) => {
+        const mx = oxs.reduce((s, v) => s + v, 0) / oxs.length;
+        const my = oys.reduce((s, v) => s + v, 0) / oys.length;
+        let num = 0, den = 0;
+        for (let i = 0; i < oxs.length; i++) { num += (oxs[i] - mx) * (oys[i] - my); den += (oxs[i] - mx) ** 2; }
+        const bb = num / den;
+        return { a: my - bb * mx, b: bb };
+      };
+      const nextM = (m) => { let yy = +m.slice(0, 4), mo = +m.slice(5, 7) + 1; if (mo > 12) { yy++; mo = 1; } return yy + "-" + String(mo).padStart(2, "0"); };
+      const prevMo = (m) => { let yy = +m.slice(0, 4), mo = +m.slice(5, 7) - 1; if (mo < 1) { yy--; mo = 12; } return yy + "-" + String(mo).padStart(2, "0"); };
+      const prevYr = (m) => (+m.slice(0, 4) - 1) + "-" + m.slice(5, 7);
+      const meClose = {}, meDate = {}, tdCount = {};
+      S.spx.dates.forEach((d, i) => { const m = d.slice(0, 7); meClose[m] = S.spx.values[i]; meDate[m] = d; tdCount[m] = (tdCount[m] || 0) + 1; });
+      const mdMonths = dates.map((d) => d.slice(0, 7));
+      const mdMap = {};
+      mdMonths.forEach((m, i) => { mdMap[m] = values[i]; });
+      const ys = [], xs = [];
+      for (let i = 1; i < mdMonths.length; i++) {
+        if (meClose[mdMonths[i]] && meClose[mdMonths[i - 1]]) {
+          ys.push(Math.log(values[i] / values[i - 1]));
+          xs.push(Math.log(meClose[mdMonths[i]] / meClose[mdMonths[i - 1]]));
+        }
+      }
+      const fitB = ols1(ys.slice(-120), xs.slice(-120));
+      let ibMap = null, ibFit = null;
+      if (S.ibkr_margin) {
+        ibMap = {};
+        S.ibkr_margin.dates.forEach((d, i) => { ibMap[d.slice(0, 7)] = S.ibkr_margin.values[i]; });
+        const ims = Object.keys(ibMap).sort(), oy = [], ox = [];
+        for (let i = 1; i < ims.length; i++) {
+          if (mdMap[ims[i]] && mdMap[ims[i - 1]]) {
+            oy.push(Math.log(mdMap[ims[i]] / mdMap[ims[i - 1]]));
+            ox.push(Math.log(ibMap[ims[i]] / ibMap[ims[i - 1]]));
+          }
+        }
+        if (oy.length >= 8) ibFit = ols1(oy, ox);
+      }
+      const spxLastM = S.spx.dates[S.spx.dates.length - 1].slice(0, 7);
+      const est = [];
+      let lvl = last, prevClose = meClose[mdMonths[n - 1]], usedIbkr = false, crashRisk = false;
+      let gm = nextM(mdMonths[n - 1]);
+      while (prevClose && meClose[gm] && gm <= spxLastM && est.length < 4) {
+        const complete = gm < spxLastM;
+        const r = Math.log(meClose[gm] / prevClose);
+        if (r < -0.08) crashRisk = true;
+        const frac = complete ? 1 : Math.min(1, (tdCount[gm] || 0) / 21);
+        let dhat = fitB.a * frac + fitB.b * r;
+        if (complete && ibFit && ibMap[gm] != null && ibMap[prevMo(gm)] != null) {
+          dhat = (dhat + ibFit.a + ibFit.b * Math.log(ibMap[gm] / ibMap[prevMo(gm)])) / 2;
+          usedIbkr = true;
+        }
+        lvl *= Math.exp(dhat);
+        est.push({ m: gm, date: meDate[gm], level: lvl });
+        prevClose = meClose[gm];
+        gm = nextM(gm);
+      }
+      const estLast = est.length ? est[est.length - 1] : null;
+      const estYoyLast = estLast && mdMap[prevYr(estLast.m)]
+        ? (estLast.level / mdMap[prevYr(estLast.m)] - 1) * 100 : null;
       let label = L("杠杆水平变化中性", "Leverage growth neutral");
       if (yoy >= 40) label = L("杠杆快速扩张（历史顶部前常见，弱证据）", "Rapid leveraging (common before past tops — weak evidence)");
       else if (yoy <= -20) label = L("去杠杆进行中（多与底部区域重叠，滞后）", "Deleveraging underway (tends to overlap bottoms, lagging)");
       return {
         value: L((last / 1e6).toFixed(2) + " 万亿$", "$" + (last / 1e6).toFixed(2) + "T"),
-        delta: L("同比 ", "YoY ") + fmt.pctS(yoy) + L(" · 增速分位 ", " · growth pctile ") + pctl.toFixed(0) + "%",
+        delta: L("同比 ", "YoY ") + fmt.pctS(yoy) +
+          (estLast ? L(" · 预估今 ≈$", " · est. now ≈$") + (estLast.level / 1e6).toFixed(2) + "T"
+                   : L(" · 增速分位 ", " · growth pctile ") + pctl.toFixed(0) + "%"),
         readings: [
-          { label: L("最新余额", "Latest balance"), value: L((last / 1e6).toFixed(3) + " 万亿美元", "$" + (last / 1e6).toFixed(3) + " trillion") },
-          { label: L("同比增速", "Year-over-year growth"), value: fmt.pctS(yoy) },
-          { label: L("增速历史分位", "Growth-rate percentile"), value: pctl.toFixed(0) + "%" },
+          { label: L("最新官方余额（" + mdMonths[n - 1] + "）", "Latest official (" + mdMonths[n - 1] + ")"),
+            value: L((last / 1e6).toFixed(3) + " 万亿美元", "$" + (last / 1e6).toFixed(3) + " trillion") },
+          { label: L("官方同比增速", "Official YoY growth"), value: fmt.pctS(yoy) + L("（分位 ", " (pctile ") + pctl.toFixed(0) + L("%）", "%)") },
+          ...(estLast ? [{
+            label: L("预估当前（β模型" + (usedIbkr ? "×IBKR前哨" : "") + "外推，±4%）",
+                     "Est. now (β-model" + (usedIbkr ? "×IBKR" : "") + " extrapolation, ±4%)"),
+            value: L("≈ " + (estLast.level / 1e6).toFixed(3) + " 万亿美元", "≈ $" + (estLast.level / 1e6).toFixed(3) + " trillion") +
+              (estYoyLast != null ? L("（同比 ", " (YoY ") + fmt.pctS(estYoyLast) + L("）", ")") : ""),
+          }] : []),
         ],
         signal: { level: "info", label },
+        note: crashRisk
+          ? L("⚠ 预估窗口内出现单月跌幅超8%：强制去杠杆情形下实际余额可能显著低于估算，请保守解读。",
+              "⚠ A month in the estimation window fell over 8%: forced deleveraging may push the actual balance well below this estimate.")
+          : undefined,
         spark: { values: values.slice(-60) },
         tallChart: true,
         renderChart(node) {
           const c = echarts.init(node);
-          const lvl = dates.map((_, i) => Number((values[i] / 1e6).toFixed(4)));
+          const allDates = dates.concat(est.map((e) => e.date));
+          const lvlOff = values.map((v) => Number((v / 1e6).toFixed(4))).concat(est.map(() => null));
+          // 预估虚线：从最后一个官方点接出，空心圆点标记
+          const lvlEst = new Array(n - 1).fill(null)
+            .concat([Number((last / 1e6).toFixed(4))], est.map((e) => Number((e.level / 1e6).toFixed(4))));
+          const yoyOff = yoyAll.concat(est.map(() => null));
+          const yoyEstArr = new Array(n - 1).fill(null).concat([yoyAll[n - 1]], est.map((e) => {
+            const b0 = mdMap[prevYr(e.m)];
+            return b0 ? Number(((e.level / b0 - 1) * 100).toFixed(1)) : null;
+          }));
+          const estStyle = (color) => ({
+            sampling: undefined, showSymbol: true, symbolSize: 7,
+            lineStyle: { width: 2, color, type: "dashed" },
+            itemStyle: { color: C.surface, borderColor: color, borderWidth: 2 },
+          });
           c.setOption({
             title: [
-              { text: L("融资余额（万亿美元）", "Margin debt ($ trillions)"), top: 8, left: 70, textStyle: { fontSize: 12, color: C.ink2, fontWeight: 600 } },
+              { text: L("融资余额（万亿美元）· 虚线为预估", "Margin debt ($T) · dashed = estimate"), top: 8, left: 70, textStyle: { fontSize: 12, color: C.ink2, fontWeight: 600 } },
               { text: L("同比增速（%）· 顶部前的极端加杠杆更值得留意", "YoY growth (%) · extreme leveraging before tops is the tell"), top: "56%", left: 70, textStyle: { fontSize: 12, color: C.ink2, fontWeight: 600 } },
             ],
             tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(2))),
             axisPointer: { link: [{ xAxisIndex: "all" }] },
+            legend: {
+              top: 4, right: 10, textStyle: { color: C.ink2, fontSize: 12 },
+              data: [L("官方", "Official"), L("预估", "Estimate")],
+            },
             grid: [
               { left: 70, right: 20, top: 36, height: "38%" },
               { left: 70, right: 20, top: "63%", height: "20%" },
             ],
             xAxis: [
-              { type: "category", boundaryGap: false, data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
-              { type: "category", boundaryGap: false, data: dates, gridIndex: 1, axisLabel: { color: C.muted, fontSize: 11, formatter: (v) => v.slice(0, 7) }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
+              { type: "category", boundaryGap: false, data: allDates, gridIndex: 0, axisLabel: { show: false }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
+              { type: "category", boundaryGap: false, data: allDates, gridIndex: 1, axisLabel: { color: C.muted, fontSize: 11, formatter: (v) => v.slice(0, 7) }, axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false } },
             ],
             yAxis: [
               { type: "value", scale: true, gridIndex: 0, splitLine: { lineStyle: { color: C.grid } }, axisLabel: { color: C.muted, fontSize: 11 } },
@@ -1564,24 +1660,26 @@ function makeIndicators() { return [
               { ...baseZoom([0, 1])[1] },
             ],
             series: [
-              { ...lineSeries(L("融资余额", "Margin debt"), lvl, C.s1), xAxisIndex: 0, yAxisIndex: 0, areaStyle: { color: C.s1, opacity: 0.08 } },
-              { ...lineSeries(L("同比增速", "YoY growth"), yoyAll, C.s2), xAxisIndex: 1, yAxisIndex: 1, markLine: markLineAt([0], (p) => p.value + "%") },
+              { ...lineSeries(L("官方", "Official"), lvlOff, C.s1), xAxisIndex: 0, yAxisIndex: 0, areaStyle: { color: C.s1, opacity: 0.08 } },
+              { ...lineSeries(L("预估", "Estimate"), lvlEst, C.s1, estStyle(C.s1)), xAxisIndex: 0, yAxisIndex: 0 },
+              { ...lineSeries(L("同比增速", "YoY growth"), yoyOff, C.s2), xAxisIndex: 1, yAxisIndex: 1, markLine: markLineAt([0], (p) => p.value + "%") },
+              { ...lineSeries(L("预估同比", "Est. YoY"), yoyEstArr, C.s2, estStyle(C.s2)), xAxisIndex: 1, yAxisIndex: 1 },
             ],
           });
-          return { chart: c, dates };
+          return { chart: c, dates: allDates };
         },
       };
     },
     desc: {
       what: L("FINRA 汇总的经纪商客户保证金账户借款（margin debt），衡量美股市场的显性杠杆水平，1997 年至今月频。",
         "Customer margin-account borrowing aggregated by FINRA — the visible leverage in the US equity market, monthly since 1997."),
-      how: L("绝对水平随市值自然增长，本身没有信息量；看<b>同比增速的极端</b>：1999-2000、2007、2021 的顶部之前都出现过 +40% 以上的加杠杆狂潮；深度去杠杆（-20% 以下）则多与熊市中后段重叠——偏同步略滞后，不是领先信号。",
-        "The level grows with market cap and carries no signal by itself; watch <b>extremes in YoY growth</b>: leveraging sprees above +40% preceded the 1999-2000, 2007 and 2021 tops, while deep deleveraging (below −20%) overlaps mid-to-late bear markets — coincident-to-lagging, not leading."),
-      caveat: L("发布滞后约一个月（图表右端永远缺最近一个月）；只覆盖持牌经纪商的保证金借款，衍生品与场外杠杆不在其中，实际总杠杆被低估。",
-        "Published with ~1 month lag (the chart's right edge is always one month short); covers only margin loans at registered broker-dealers — derivatives and off-exchange leverage are excluded, so total leverage is understated."),
+      how: L("绝对水平随市值自然增长，本身没有信息量；看<b>同比增速的极端</b>：1999-2000、2007、2021 的顶部之前都出现过 +40% 以上的加杠杆狂潮；深度去杠杆（-20% 以下）则多与熊市中后段重叠——偏同步略滞后，不是领先信号。<b>图表末端虚线为现时预估</b>：Δlog(余额) ≈ α + 0.68×标普月度收益（近120个月滚动拟合；1997 年以来严格样本外回测月均误差 ±2.7%，凸性与滞后修正项经检验无增益已弃用），缺口月若有 IBKR 前哨数据（其保证金贷款次月1-3日即发布，与 FINRA 月度变化相关性 0.77）则与 β 模型各取一半权重。",
+        "The level grows with market cap and carries no signal by itself; watch <b>extremes in YoY growth</b>: leveraging sprees above +40% preceded the 1999-2000, 2007 and 2021 tops, while deep deleveraging (below −20%) overlaps mid-to-late bear markets — coincident-to-lagging, not leading. <b>The dashed tail is a nowcast</b>: Δlog(balance) ≈ α + 0.68×S&P monthly return (rolling 120-month fit; strict out-of-sample backtest since 1997 shows ±2.7%/month mean error; convexity and lag corrections tested and rejected for no OOS gain). When IBKR's sentinel data is available for a gap month (their margin loans publish on the 1st–3rd, 0.77 correlation with FINRA's monthly change), it gets half the weight alongside the β-model."),
+      caveat: L("发布滞后约一个月（虚线预估正是为此而设）；只覆盖持牌经纪商的保证金借款，衍生品与场外杠杆不在其中，实际总杠杆被低估。预估的已知盲区：暴跌月的强制去杠杆会被显著低估（2008-10/11 实际 -20% vs 模型 -3~-6%）——越是危机时刻越要保守解读虚线。",
+        "Published with ~1 month lag (which is exactly what the dashed nowcast addresses); covers only margin loans at registered broker-dealers — derivatives and off-exchange leverage are excluded, so total leverage is understated. Known blind spot of the estimate: forced deleveraging in crash months is badly underestimated (Oct/Nov 2008 actual −20% vs model −3 to −6%) — read the dashed line conservatively precisely when it matters most."),
     },
-    source: L("数据：FINRA Margin Statistics 官方历史文件，月频，1997-01 至今（约一个月发布滞后）。",
-      "Data: official FINRA Margin Statistics history file, monthly, since Jan 1997 (~1-month publication lag)."),
+    source: L("数据：FINRA Margin Statistics 官方历史文件，月频，1997-01 至今（约一个月发布滞后）；预估基于 Cboe SPX 日线与 IBKR 月度经营指标（官方新闻稿 PDF，自动解析）。虚线预估为统计外推，非官方数据。",
+      "Data: official FINRA Margin Statistics history file, monthly, since Jan 1997 (~1-month lag); nowcast uses Cboe SPX daily data and IBKR monthly brokerage metrics (official press-release PDFs, auto-parsed). The dashed estimate is a statistical extrapolation, not official data."),
   },
 ]; }
 let INDICATORS = makeIndicators();
@@ -1758,17 +1856,26 @@ function buildIndicator(ind) {
     card.classList.add("loading");
     card.querySelector(".c-value").textContent = L("加载中…", "Loading…");
   }
-  return Promise.all(ind.deps.map(loadSeries))
-    .then((list) => {
+  const optional = ind.optionalDeps || [];
+  return Promise.all([
+    Promise.all(ind.deps.map(loadSeries)),
+    Promise.allSettled(optional.map(loadSeries)),  // 可选依赖失败不拖垮指标
+  ])
+    .then(([list, optRes]) => {
       const S = {};
       ind.deps.forEach((k, i) => { S[k] = list[i]; });
+      const optOk = [];
+      optional.forEach((k, i) => {
+        if (optRes[i].status === "fulfilled") { S[k] = optRes[i].value; optOk.push(optRes[i].value); }
+      });
       const b = ind.build(S);
       // 汇总所有依赖序列的提示与 stale 标记（缓存回退时全部指标可见，而非仅 OAS）
-      const notes = new Set(list.map((s) => s.note).filter(Boolean));
+      const all = list.concat(optOk);
+      const notes = new Set(all.map((s) => s.note).filter(Boolean));
       if (b.note) notes.add(b.note);
       b.note = notes.size ? [...notes].join(" ") : undefined;
-      b.stale = list.some((s) => s.stale);
-      // 数据更新日：取各依赖序列最后日期中最早的一个（最慢的组件截至哪天）
+      b.stale = all.some((s) => s.stale);
+      // 数据更新日：取必需依赖最后日期中最早的一个（最慢的组件截至哪天）
       b.updated = list.map((s) => s.dates[s.dates.length - 1]).sort()[0];
       built[ind.id] = b;
       delete failed[ind.id];
