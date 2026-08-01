@@ -1738,15 +1738,20 @@ function renderStrip() {
 function renderCardShell() {
   const cards = $("#cards");
   cards.innerHTML = "";
-  INDICATORS.forEach((ind) => {
-    const g = groupName(GROUPS.find((x) => x.id === ind.group));
-    const card = el("div", "card loading");
-    card.id = "card-" + ind.id;
-    card.innerHTML =
-      `<div class="c-top"><span class="c-name">${ind.name}</span><span class="c-group">${g}</span></div>` +
-      `<div class="c-value">${L("加载中…", "Loading…")}</div><div class="c-delta"></div><div class="c-bottom"></div>`;
-    card.onclick = () => { if (built[ind.id]) showDetail(ind.id); };
-    cards.appendChild(card);
+  // 按分组分区：每组先插一条占满整行的小副标题，其下排列该组卡片
+  GROUPS.forEach((g) => {
+    const members = INDICATORS.filter((x) => x.group === g.id);
+    if (!members.length) return;
+    cards.appendChild(el("div", "cards-group-head", groupName(g)));
+    members.forEach((ind) => {
+      const card = el("div", "card loading");
+      card.id = "card-" + ind.id;
+      card.innerHTML =
+        `<div class="c-top"><span class="c-name">${ind.name}</span></div>` +
+        `<div class="c-value">${L("加载中…", "Loading…")}</div><div class="c-delta"></div><div class="c-bottom"></div>`;
+      card.onclick = () => { if (built[ind.id]) showDetail(ind.id); };
+      cards.appendChild(card);
+    });
   });
 }
 function updateCard(ind) {
