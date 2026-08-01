@@ -1602,8 +1602,8 @@ function makeIndicators() { return [
             value: L((last / 1e6).toFixed(3) + " 万亿美元", "$" + (last / 1e6).toFixed(3) + " trillion") },
           { label: L("官方同比增速", "Official YoY growth"), value: fmt.pctS(yoy) + L("（分位 ", " (pctile ") + pctl.toFixed(0) + L("%）", "%)") },
           ...(estLast ? [{
-            label: L("预估当前（β模型" + (usedIbkr ? "×IBKR前哨" : "") + "外推，±4%）",
-                     "Est. now (β-model" + (usedIbkr ? "×IBKR" : "") + " extrapolation, ±4%)"),
+            label: L("预估至 " + estLast.date + "（β模型" + (usedIbkr ? "×IBKR前哨" : "") + "外推，±4%）",
+                     "Est. as of " + estLast.date + " (β-model" + (usedIbkr ? "×IBKR" : "") + ", ±4%)"),
             value: L("≈ " + (estLast.level / 1e6).toFixed(3) + " 万亿美元", "≈ $" + (estLast.level / 1e6).toFixed(3) + " trillion") +
               (estYoyLast != null ? L("（同比 ", " (YoY ") + fmt.pctS(estYoyLast) + L("）", ")") : ""),
           }] : []),
@@ -1617,7 +1617,9 @@ function makeIndicators() { return [
         tallChart: true,
         renderChart(node) {
           const c = echarts.init(node);
-          const allDates = dates.concat(est.map((e) => e.date));
+          // 官方点对齐到真实月末交易日（FINRA 数值本就是月末余额；键值月初仅是存储约定）
+          const dispDates = dates.map((d) => meDate[d.slice(0, 7)] || d);
+          const allDates = dispDates.concat(est.map((e) => e.date));
           const lvlOff = values.map((v) => Number((v / 1e6).toFixed(4))).concat(est.map(() => null));
           // 预估虚线：从最后一个官方点接出，空心圆点标记
           const lvlEst = new Array(n - 1).fill(null)
