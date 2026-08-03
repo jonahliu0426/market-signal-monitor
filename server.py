@@ -628,6 +628,8 @@ class Handler(BaseHTTPRequestHandler):
         fp = os.path.realpath(os.path.join(PUBLIC, path.lstrip("/")))
         if not fp.startswith(os.path.realpath(PUBLIC) + os.sep):
             return self._send(403, "forbidden", "text/plain")
+        if os.path.isdir(fp):  # 目录索引（与 GitHub Pages 行为对齐）
+            fp = os.path.join(fp, "index.html")
         if not os.path.isfile(fp):
             return self._send(404, "not found", "text/plain")
         ext = os.path.splitext(fp)[1].lower()

@@ -471,6 +471,19 @@ const ASSETS = [
 ];
 const nameOf = (row) => (LANG === "zh" ? row[1] : row[2]);
 
+/* 每指标静态详解页的 slug（与 seo_content.json 保持一致，构建脚本会校验） */
+const SLUGS = {
+  hy_oas: "high-yield-credit-spread", t10y3m: "yield-curve-10y-3m",
+  icsa: "initial-jobless-claims", breadth: "market-breadth-rsp-spy",
+  vix_ts: "vix-term-structure", nfci: "financial-conditions-nfci",
+  tsmom: "time-series-momentum", xsmom: "cross-sectional-momentum",
+  ma200: "200-day-moving-average", volmgmt: "volatility-targeting",
+  high52: "52-week-high", aaii: "aaii-sentiment-survey",
+  cot: "cot-sp500-positioning", umcsent: "michigan-consumer-sentiment",
+  naaim: "naaim-exposure-index", skew: "cboe-skew-index",
+  finra_margin: "finra-margin-debt",
+};
+
 function makeIndicators() { return [
   /* ---------- 1. 高收益债 OAS ---------- */
   {
@@ -1790,6 +1803,7 @@ function showOverview() {
   $("#overview").hidden = false;
   document.querySelectorAll(".nav-item").forEach((n) => n.classList.remove("active"));
   document.querySelector(".nav-overview").classList.add("active");
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 function showDetail(id) {
   const ind = INDICATORS.find((x) => x.id === id);
@@ -1842,6 +1856,8 @@ function showDetail(id) {
   } else {
     $("#d-ranges").innerHTML = "";
   }
+  // 深链：把当前指标写进 URL 哈希，便于直接分享具体指标页
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
   const aux = $("#d-aux");
   aux.innerHTML = "";
   if (b.renderAux) b.renderAux(aux);
@@ -1851,6 +1867,7 @@ function showDetail(id) {
     `<h4>${L("局限与注意", "Limitations")}</h4><p>${ind.desc.caveat}</p>`;
   $("#d-source").innerHTML = ind.source +
     (b.note ? ` <span class="note-flag">⚠ ${esc(translateNote(b.note))}</span>` : "") +
+    (SLUGS[id] ? ` · <a class="src-link" href="/i/${SLUGS[id]}/">📖 ${L("指标详解页", "Indicator guide")}</a>` : "") +
     "<br>" + L("本页面仅为公开数据与学术文献的可视化整理，不构成任何投资建议。",
       "This page visualizes public data and academic findings for research purposes only — not investment advice.");
   window.scrollTo(0, 0);
@@ -1914,6 +1931,16 @@ function boot() {
   $("#theme-toggle").onclick = () =>
     applyTheme(themeMode === "dark" ? "light" : "dark", true);
   $("#lang-toggle").onclick = () => applyLang(LANG === "zh" ? "en" : "zh");
+
+  // 深链路由：/#指标id 直达详情页（数据就绪后由 buildIndicator 自动打开）
+  const initial = location.hash.slice(1);
+  if (INDICATORS.some((i) => i.id === initial)) currentDetail = initial;
+  window.addEventListener("hashchange", () => {
+    const h = location.hash.slice(1);
+    if (!h) { if (currentDetail) showOverview(); }
+    else if (built[h]) showDetail(h);
+    else if (INDICATORS.some((i) => i.id === h)) currentDetail = h;
+  });
 
   dataMode.then((d) => { metaInfo = d; renderMetaLine(); })
     .catch(() => { metaInfo = { mode: "none" }; renderMetaLine(); });

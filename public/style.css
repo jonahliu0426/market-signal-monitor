@@ -40,6 +40,21 @@
   --crit-soft: #e34948;
 }
 
+/* 首页静态页脚：详解页入口（同时供搜索引擎无 JS 发现内容） */
+#site-footer {
+  border-top: 1px solid var(--border); background: var(--surface);
+  padding: 18px 24px 80px;
+}
+#site-footer .sf-title { font-size: 12.5px; color: var(--muted); letter-spacing: 0.06em; margin-bottom: 10px; }
+#site-footer .sf-links a {
+  display: inline-block; font-size: 12.5px; color: var(--ink2); text-decoration: none;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 11px; margin: 0 6px 6px 0;
+}
+#site-footer .sf-links a:hover { border-color: var(--muted); color: var(--ink); }
+.src-link { color: var(--s1); text-decoration: none; }
+.src-link:hover { text-decoration: underline; }
+
 /* 左下角：深浅色切换（上）+ 中英文切换（下） */
 #theme-toggle, #lang-toggle {
   position: fixed; left: 14px; z-index: 40;
