@@ -481,7 +481,7 @@ const SLUGS = {
   high52: "52-week-high", aaii: "aaii-sentiment-survey",
   cot: "cot-sp500-positioning", umcsent: "michigan-consumer-sentiment",
   naaim: "naaim-exposure-index", skew: "cboe-skew-index",
-  finra_margin: "finra-margin-debt",
+  finra_margin: "finra-margin-debt", crossmkt: "cross-market-risk",
 };
 
 function makeIndicators() { return [
@@ -732,6 +732,7 @@ function makeIndicators() { return [
     subtitle: L("1个月隐含波动率 ÷ 3个月隐含波动率 · 日频 · FRED: VIXCLS / VXVCLS",
       "1-month ÷ 3-month implied volatility · daily · FRED: VIXCLS / VXVCLS"),
     deps: ["vix", "vix3m"],
+    optionalDeps: ["vvix"],
     build(S) {
       const al = alignTwo(S.vix, S.vix3m);
       const ratio = al.dates.map((_, i) => al.a[i] / al.b[i]);
@@ -763,6 +764,29 @@ function makeIndicators() { return [
               { markLine: markLineAt([1]) }),
           });
           return { chart: c, dates: al.dates };
+        },
+        renderAux(node) {
+          if (!S.vvix) return;
+          node.appendChild(el("div", "aux-title",
+            L("VVIX（VIX 的波动率）与 VIX · 近两年 · 高位背离时留意波动率市场的紧张",
+              "VVIX (vol of VIX) vs VIX · last 2 years · divergence hints at stress in the vol market")));
+          const box = el("div", "aux-chart");
+          box.style.height = "300px";
+          node.appendChild(box);
+          const av = alignTwo(S.vvix, S.vix);
+          const n2 = av.dates.length, cut = Math.max(0, n2 - 504);
+          const c2 = echarts.init(box);
+          c2.setOption({
+            ...baseAxes(av.dates.slice(cut), { yFmt: (v) => v }),
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(1))),
+            legend: { top: 2, right: 10, textStyle: { color: C.ink2, fontSize: 12 } },
+            grid: { left: 56, right: 20, top: 32, bottom: 30 },
+            series: [
+              lineSeries("VVIX", av.a.slice(cut), C.s2),
+              lineSeries("VIX", av.b.slice(cut), C.muted, { lineStyle: { width: 1.2, color: C.muted, opacity: 0.8 } }),
+            ],
+          });
+          liveCharts.push(c2);
         },
       };
     },
@@ -830,6 +854,105 @@ function makeIndicators() { return [
     },
     source: L("数据：FRED · Chicago Fed National Financial Conditions Index（NFCI），周频（每周三更新），1985 年至今。",
       "Data: FRED · Chicago Fed National Financial Conditions Index (NFCI), weekly (updated Wednesdays), since 1985."),
+  },
+
+  /* ---------- 6b. 跨市场风险偏好 ---------- */
+  {
+    id: "crossmkt", group: "g2",
+    name: L("跨市场风险偏好（Risk-On/Off）", "Cross-Market Risk Appetite"),
+    short: L("跨市场", "Cross-market"),
+    subtitle: L("铜金比 · 广义美元指数 · 10年期收益率 · 信用比（HYG/IEF）· 日频",
+      "Copper/gold · broad dollar index · 10-year yield · credit ratio (HYG/IEF) · daily"),
+    freq: "每日更新",
+    deps: ["cper", "gld", "hyg", "ief", "dgs10", "dollar"],
+    build(S) {
+      const chg20 = (arr) => {
+        const p = idxOffset(arr, 20);
+        return p == null ? null : (arr[arr.length - 1] / p - 1) * 100;
+      };
+      const cg = alignTwo(S.cper, S.gld);
+      const ratio = cg.dates.map((_, i) => cg.a[i] / cg.b[i]);
+      const ma50 = sma(ratio, 50);
+      const hi = alignTwo(S.hyg, S.ief);
+      const credit = hi.dates.map((_, i) => hi.a[i] / hi.b[i]);
+      const cg20 = chg20(ratio), cr20 = chg20(credit), dx20 = chg20(S.dollar.values);
+      const y10 = S.dgs10.values;
+      const y10p = idxOffset(y10, 20);
+      const y10chg = y10p == null ? null : (y10[y10.length - 1] - y10p) * 100; // bp
+      let score = 0;
+      if (cg20 != null) score += cg20 > 0 ? 1 : -1;
+      if (cr20 != null) score += cr20 > 0 ? 1 : -1;
+      if (dx20 != null) score += dx20 < 0 ? 1 : -1;
+      let level = "info", label = L("跨市场信号分歧，中性", "Cross-market signals mixed");
+      if (score >= 2) { level = "good"; label = L("跨市场偏 Risk-On（多数信号同向）", "Leaning risk-on across markets"); }
+      else if (score <= -2) { level = "warn"; label = L("跨市场偏 Risk-Off（多数信号同向）", "Leaning risk-off across markets"); }
+      const lastRatio = ratio[ratio.length - 1];
+      const maLast = ma50[ma50.length - 1];
+      const rows = [
+        { n: L("铜金比（CPER/GLD）", "Copper/Gold (CPER/GLD)"), v: cg20,
+          on: cg20 != null && cg20 > 0, hint: L("上行=风险偏好", "up = risk-on") },
+        { n: L("信用比（HYG/IEF）", "Credit (HYG/IEF)"), v: cr20,
+          on: cr20 != null && cr20 > 0, hint: L("上行=信用偏好", "up = credit appetite") },
+        { n: L("广义美元指数", "Broad dollar index"), v: dx20,
+          on: dx20 != null && dx20 < 0, hint: L("下行=风险偏好", "down = risk-on") },
+      ];
+      return {
+        value: score >= 2 ? "Risk-On" : score <= -2 ? "Risk-Off" : L("中性", "Neutral"),
+        delta: L("铜金比20日 ", "Cu/Au 20d ") + pctOr(cg20) + L(" · 信用比 ", " · credit ") + pctOr(cr20) +
+          L(" · 美元 ", " · dollar ") + pctOr(dx20),
+        readings: [
+          { label: L("铜金比（相对50日线）", "Copper/gold (vs 50-day MA)"),
+            value: lastRatio.toFixed(4) + (maLast ? L(maLast <= lastRatio ? "（线上）" : "（线下）", maLast <= lastRatio ? " (above)" : " (below)") : "") },
+          { label: L("10年期收益率 20日变化", "10-year yield, 20-day change"),
+            value: y10chg == null ? "—" : (y10chg >= 0 ? "+" : "") + y10chg.toFixed(0) + " bp" },
+          { label: L("信用比 HYG/IEF 20日", "HYG/IEF 20-day"), value: pctOr(cr20) },
+          { label: L("广义美元指数 20日", "Broad dollar 20-day"), value: pctOr(dx20) },
+        ],
+        signal: { level, label },
+        spark: { values: ratio.slice(-252) },
+        renderChart(node) {
+          const c = echarts.init(node);
+          c.setOption({
+            ...baseAxes(cg.dates, { yFmt: (v) => Number(v).toFixed(3) }),
+            tooltip: baseTooltip((v) => (v == null ? "—" : Number(v).toFixed(4))),
+            legend: { top: 2, right: 10, textStyle: { color: C.ink2, fontSize: 12 } },
+            grid: { left: 64, right: 20, top: 34, bottom: 62 },
+            dataZoom: baseZoom(),
+            series: [
+              lineSeries(L("铜金比 CPER/GLD", "Copper/Gold"), ratio, C.s1),
+              lineSeries(L("50日均线", "50-day MA"), ma50, C.s2, { lineStyle: { width: 1.5, color: C.s2 } }),
+            ],
+          });
+          return { chart: c, dates: cg.dates };
+        },
+        renderAux(node) {
+          node.appendChild(el("div", "aux-title", L("跨市场信号一览（20 日变化）", "Cross-market signals (20-day change)")));
+          const t = el("table", "aux-table",
+            `<tr><th>${L("信号", "Signal")}</th><th>${L("20日变化", "20-day")}</th><th>${L("方向含义", "Reading")}</th></tr>` +
+            rows.map((r) => {
+              const lv = r.v == null ? "info" : r.on ? "good" : "warn";
+              const tx = r.v == null ? "—" : r.on ? "Risk-On" : "Risk-Off";
+              return `<tr><td>${r.n}<br><span style="color:var(--muted);font-size:11px">${r.hint}</span></td>` +
+                `<td class="num">${pctOr(r.v)}</td>` +
+                `<td><span class="badge ${lv}"><span class="ico">${LEVEL[lv].ico}</span><span class="badge-txt">${tx}</span></span></td></tr>`;
+            }).join("") +
+            `<tr><td>${L("10年期收益率", "10-year yield")}<br><span style="color:var(--muted);font-size:11px">${L("方向含义视通胀/增长背景而定", "direction depends on macro context")}</span></td>` +
+            `<td class="num">${y10chg == null ? "—" : (y10chg >= 0 ? "+" : "") + y10chg.toFixed(0) + " bp"}</td>` +
+            `<td><span class="badge info"><span class="ico">◦</span><span class="badge-txt">${L("仅观察", "Info only")}</span></span></td></tr>`);
+          node.appendChild(t);
+        },
+      };
+    },
+    desc: {
+      what: L("把四个跨市场的风险偏好信号放在一张卡里：铜金比（工业需求 vs 避险需求）、HYG/IEF 信用比（垃圾债相对国债的市场定价，信用市场往往先于股市转向）、广义美元指数（全球流动性松紧）与 10 年期收益率。",
+        "Four cross-market risk-appetite reads in one card: the copper/gold ratio (industrial demand vs safe-haven demand), the HYG/IEF credit ratio (junk bonds vs Treasuries — credit often turns before equities), the broad dollar index (global liquidity), and the 10-year yield."),
+      how: L("看 20 日趋势的多数方向：铜金比上行、信用比上行、美元下行为 Risk-On 组合；反向为 Risk-Off；分歧时中性。主图为铜金比与其 50 日均线——它是四者中历史最长、噪音相对最小的一条。10 年期收益率单列观察：利率上行可能是增长（risk-on）也可能是通胀恐慌（risk-off），方向含义视背景而定。",
+        "Follow the majority direction of 20-day trends: copper/gold up, credit ratio up and dollar down make the risk-on combination; the reverse is risk-off; disagreement is neutral. The main chart shows copper/gold with its 50-day MA — the longest and least noisy of the four. The 10-year yield is shown for observation only: rising rates can mean growth (risk-on) or inflation fear (risk-off)."),
+      caveat: L("这些是同步性很强的确认信号，不是领先指标——择时证据一般，归入噪音大分组。铜金比用 CPER/GLD ETF 代理（未复权价格），与期货铜金比略有偏差；HYG/IEF 与高收益 OAS 高度相关，可互相印证。",
+        "These are strongly coincident confirmation signals, not leading indicators — timing evidence is modest, hence the noisy tier. Copper/gold uses the CPER/GLD ETF proxy (unadjusted prices), which deviates slightly from the futures ratio; HYG/IEF is highly correlated with the high-yield OAS and the two cross-check each other."),
+    },
+    source: L("数据：Nasdaq 行情 API · CPER/GLD/HYG/IEF 未复权收盘价（近 10 年）；FRED · 广义美元指数（DTWEXBGS）与 10 年期国债收益率（DGS10）。",
+      "Data: Nasdaq quote API · CPER/GLD/HYG/IEF unadjusted closes (last 10 years); FRED · broad dollar index (DTWEXBGS) and 10-year Treasury yield (DGS10)."),
   },
 
   /* ---------- 7. 时间序列动量 ---------- */
@@ -931,6 +1054,18 @@ function makeIndicators() { return [
       const sep = L("、", ", ");
       const top3 = ranks.slice(0, 3).map((r) => r.name).join(sep);
       const bot3 = ranks.slice(-3).map((r) => r.name).join(sep);
+      // 板块轮动象限：RS比率 = 100×(板块/SPY 比值 ÷ 其50日均线)；RS动能 = 比率的10日变化率
+      const quad = SECTORS.map((row) => {
+        const a2 = alignTwo(S[row[0]], S.spy);
+        const rs = a2.dates.map((_, i) => a2.a[i] / a2.b[i]);
+        const ma = sma(rs, 50);
+        const rr = rs.map((v, i) => (ma[i] ? (v / ma[i]) * 100 : null));
+        const n2 = rr.length;
+        if (n2 < 61 || rr[n2 - 1] == null || rr[n2 - 11] == null) return null;
+        return { name: nameOf(row),
+          x: Number(rr[n2 - 1].toFixed(2)),
+          y: Number((100 * rr[n2 - 1] / rr[n2 - 11]).toFixed(2)) };
+      }).filter(Boolean);
       return {
         value: ranks.length ? ranks[0].name : "—",
         delta: L("领涨行业（12-1 动量）", "Leading sector (12-1 momentum)"),
@@ -991,6 +1126,51 @@ function makeIndicators() { return [
             }],
           });
           liveCharts.push(c);
+
+          // —— 板块轮动象限图（swing 择位参考）——
+          node.appendChild(el("div", "aux-title",
+            L("板块轮动象限（横轴：相对强度比率 · 纵轴：强度动能，中心=100）",
+              "Sector rotation quadrants (x: RS ratio · y: RS momentum, center = 100)")));
+          const qbox = el("div", "aux-chart");
+          qbox.style.height = "420px";
+          node.appendChild(qbox);
+          const qc = echarts.init(qbox);
+          const qColor = (p) => (p.x >= 100 ? (p.y >= 100 ? C.s3 : C.s2) : (p.y >= 100 ? C.s1 : C.critSoft));
+          const QUAD_NAMES = [
+            [L("领先", "Leading"), "max", "max"], [L("改善", "Improving"), "min", "max"],
+            [L("落后", "Lagging"), "min", "min"], [L("转弱", "Weakening"), "max", "min"],
+          ];
+          qc.setOption({
+            tooltip: {
+              ...baseTooltip(), trigger: "item",
+              formatter: (p) => p.data.name + "<br/>" +
+                L("RS比率 ", "RS ratio ") + p.data.value[0].toFixed(1) +
+                L(" · 动能 ", " · momentum ") + p.data.value[1].toFixed(1),
+            },
+            grid: { left: 56, right: 30, top: 30, bottom: 40 },
+            xAxis: { type: "value", scale: true, name: L("RS比率", "RS ratio"), nameTextStyle: { color: C.muted },
+              splitLine: { lineStyle: { color: C.grid } }, axisLabel: { color: C.muted, fontSize: 11 } },
+            yAxis: { type: "value", scale: true, name: L("RS动能", "RS mom."), nameTextStyle: { color: C.muted },
+              splitLine: { lineStyle: { color: C.grid } }, axisLabel: { color: C.muted, fontSize: 11 } },
+            series: [{
+              type: "scatter", symbolSize: 14,
+              data: quad.map((p) => ({ name: p.name, value: [p.x, p.y],
+                itemStyle: { color: qColor(p), borderColor: C.surface, borderWidth: 2 } })),
+              label: { show: true, position: "top", color: C.ink2, fontSize: 11,
+                formatter: (p) => p.data.name },
+              markLine: { silent: true, symbol: "none",
+                lineStyle: { color: C.muted, type: "dashed", width: 1 },
+                label: { show: false }, data: [{ xAxis: 100 }, { yAxis: 100 }] },
+              markArea: { silent: true,
+                label: { color: C.muted, fontSize: 11, position: "insideTopRight" },
+                itemStyle: { color: "transparent" },
+                data: QUAD_NAMES.map(([nm, xs, ys]) => [
+                  { name: nm, xAxis: xs === "max" ? 100 : "min", yAxis: ys === "max" ? 100 : "min" },
+                  { xAxis: xs === "max" ? "max" : 100, yAxis: ys === "max" ? "max" : 100 },
+                ]) },
+            }],
+          });
+          liveCharts.push(qc);
         },
       };
     },

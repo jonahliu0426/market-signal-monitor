@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>波动率管理（Volatility Targeting）：Moreira-Muir 2017 详解 — 市场信号监测</title>
-<meta name="description" content="按波动率倒数调整仓位：高波动减仓、低波动加仓，历史上改善夏普比率而非收益。20 日实现波动率的读法、15% 目标示例与快速崩盘时的滞后缺陷。">
-<link rel="canonical" href="https://weathertop.app/i/volatility-targeting/">
+<title>跨市场风险偏好信号：铜金比、美元指数、信用比怎么一起看？— 市场信号监测</title>
+<meta name="description" content="铜金比（risk on/off）、HYG/IEF 信用比、广义美元指数与 10 年期收益率的组合读法：多数同向时的风险偏好判定、各自的方向含义与同步性局限。">
+<link rel="canonical" href="https://weathertop.app/i/cross-market-risk/">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Weathertop 市场信号监测">
-<meta property="og:title" content="波动率管理（Vol Targeting） — 定义、读法、证据与局限">
-<meta property="og:description" content="按波动率倒数调整仓位：高波动减仓、低波动加仓，历史上改善夏普比率而非收益。20 日实现波动率的读法、15% 目标示例与快速崩盘时的滞后缺陷。">
-<meta property="og:url" content="https://weathertop.app/i/volatility-targeting/">
+<meta property="og:title" content="跨市场风险偏好（Risk-On / Risk-Off） — 定义、读法、证据与局限">
+<meta property="og:description" content="铜金比（risk on/off）、HYG/IEF 信用比、广义美元指数与 10 年期收益率的组合读法：多数同向时的风险偏好判定、各自的方向含义与同步性局限。">
+<meta property="og:url" content="https://weathertop.app/i/cross-market-risk/">
 <meta property="og:image" content="https://weathertop.app/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="/style.css">
@@ -39,9 +39,9 @@
 <div class="seo-wrap">
   <div class="site"><a href="/">📈 Weathertop 市场信号监测</a> · 指标详解</div>
   <article>
-    <h1>波动率管理（Vol Targeting）</h1>
-    <h2>是什么</h2><p>按波动率倒数调整仓位的风控框架：波动率高时减仓、低时加仓，使组合风险维持在目标水平附近。理论依据是波动率的聚集性——高波动跟随高波动，且高波动期的单位风险回报更差。</p><h2>怎么读</h2><p>上图为标普 500 的 20 日实现波动率（年化）：15% 以下为低波动状态，15–25% 中等，25% 以上为高波动状态。下图为以 15% 目标为例的仓位系数 min(1, 15%÷σ)——纯公式演示，目标值并非推荐参数。</p><h2>历史与证据</h2><p>Moreira 与 Muir（2017，Journal of Finance）证明波动率管理组合在美股及多资产上历史性地改善了夏普比率与回撤特征。其效果在 2008、2020 这类波动率持续飙升的时期最为显著。</p><h2>局限与注意</h2><p>改善的是夏普，不是收益——别指望它跑赢买入持有。快速崩盘时（2020 年 2 月）20 日窗口的信号天然滞后数日；频繁调仓有交易与税务成本；且低波动加杠杆的完整版实现对个人投资者并不友好。</p>
-    <a class="seo-cta" href="/#volmgmt">查看实时图表与当前信号 →</a>
+    <h1>跨市场风险偏好（Risk-On / Risk-Off）</h1>
+    <h2>是什么</h2><p>把四个跨市场的风险偏好信号放进一张卡：铜金比（工业需求 vs 避险需求的比价）、HYG/IEF 信用比（垃圾债相对国债的市场定价）、广义美元指数（全球流动性松紧）与 10 年期美债收益率。股票之外的市场往往用真金白银投票，与股市信号互相印证。</p><h2>怎么读</h2><p>看 20 日趋势的多数方向：铜金比上行、信用比上行、美元下行构成 Risk-On 组合；全部反向为 Risk-Off；互相打架时中性观望。</p><p>10 年期收益率单列观察不计分：利率上行可能反映增长预期（risk-on）也可能是通胀恐慌（risk-off），方向含义必须结合背景判断。</p><h2>历史与证据</h2><p>信用市场先于股市转向的案例最有分量：2007 年高收益利差与 HYG 相对表现早于标普见顶数月恶化；2020 年 3 月信用比的修复也领先于股市底部确认。铜金比与全球制造业周期高度同步，2016、2020 年的拐点均清晰可辨。</p><h2>局限与注意</h2><p>这些信号同步性强、领先性一般，定位是确认器而非预警器，故归入噪音较大分组。铜金比用 CPER/GLD ETF 代理，与期货比价略有偏差；美元指数用美联储广义口径（DTWEXBGS），与 DXY 走势接近但不完全相同。</p>
+    <a class="seo-cta" href="/#crossmkt">查看实时图表与当前信号 →</a>
   </article>
   <nav class="seo-rel"><div class="t">全部指标详解</div><a href="/i/high-yield-credit-spread/">高收益债信用利差（OAS）</a><a href="/i/yield-curve-10y-3m/">收益率曲线（10年 − 3个月）</a><a href="/i/initial-jobless-claims/">初请失业金人数</a><a href="/i/market-breadth-rsp-spy/">市场宽度（等权/市值比值代理）</a><a href="/i/vix-term-structure/">VIX 期限结构（VIX / VIX3M）</a><a href="/i/financial-conditions-nfci/">金融条件指数（NFCI）</a><a href="/i/time-series-momentum/">时间序列动量（趋势跟踪）</a><a href="/i/cross-sectional-momentum/">横截面动量（强者恒强）</a><a href="/i/200-day-moving-average/">200 日均线（趋势过滤器）</a><a href="/i/volatility-targeting/">波动率管理（Vol Targeting）</a><a href="/i/52-week-high/">52 周新高距离</a><a href="/i/aaii-sentiment-survey/">AAII 散户情绪调查</a><a href="/i/cot-sp500-positioning/">标普期货投机者净头寸（COT）</a><a href="/i/michigan-consumer-sentiment/">密歇根大学消费者信心指数</a><a href="/i/naaim-exposure-index/">NAAIM 主动管理人股票敞口</a><a href="/i/cboe-skew-index/">Cboe SKEW 指数（尾部风险定价）</a><a href="/i/cross-market-risk/">跨市场风险偏好（Risk-On / Risk-Off）</a><a href="/i/finra-margin-debt/">融资余额（FINRA 保证金债务）</a></nav>
   <div class="seo-foot">本页面为公开数据与学术文献结论的整理，仅供研究参考，不构成任何投资建议。数据每日自动更新，实时读数见<a href="/" style="color:var(--muted)">主面板</a>。</div>

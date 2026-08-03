@@ -75,7 +75,11 @@ SERIES = {
     "aaii":    {"src": "aaii"},
     # ---- 其他情绪/仓位类 ----
     "skew":    {"src": "cboe", "id": "SKEW"},
+    "vvix":    {"src": "cboe", "id": "VVIX"},
     "umcsent": {"src": "fred", "id": "UMCSENT", "cosd": "1952-11-01"},
+    # ---- 跨市场 ----
+    "dgs10":   {"src": "fred", "id": "DGS10", "cosd": "1985-01-01"},
+    "dollar":  {"src": "fred", "id": "DTWEXBGS", "cosd": "2006-01-01"},
     "cot":     {"src": "cot"},     # CFTC E-mini 标普投机者净头寸
     "naaim":   {"src": "naaim"},   # NAAIM 主动管理人股票敞口
     "finra_margin": {"src": "finra"},  # FINRA 融资余额（月频）
@@ -86,7 +90,7 @@ SERIES = {
     **{k: {"src": "nasdaq", "id": k.upper()} for k in [
         "spy", "qqq", "rsp", "mtum", "tlt", "gld", "eem",
         "xlb", "xle", "xlf", "xli", "xlk", "xlp", "xlu", "xlv", "xly",
-        "xlre", "xlc",
+        "xlre", "xlc", "cper", "hyg", "ief",
     ]},
 }
 
