@@ -2,9 +2,12 @@ name: build-and-deploy
 
 on:
   schedule:
-    # 北京时间 07:30 与 09:30（美股收盘数据发布后，跑两次吸收上游修正）
+    # 每日两次，按数据源实际发布节奏错开：
+    # 1) UTC 23:30（美东晚间/北京早7:30）：美股收盘后取当日全部行情类 EOD（Cboe/Nasdaq）
+    # 2) UTC 15:30（美东上午/北京晚23:30）：取美东上午发布的宏观与情绪数据
+    #    （周四初请+AAII、周三NFCI、FRED 日频隔日值、月初 IBKR 等）
     - cron: "30 23 * * *"
-    - cron: "30 1 * * *"
+    - cron: "30 15 * * *"
   workflow_dispatch:
   push:
     branches: [main]
