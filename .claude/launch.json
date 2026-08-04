@@ -12,6 +12,12 @@
       "runtimeExecutable": "/usr/bin/python3",
       "runtimeArgs": ["-m", "http.server", "8970", "--directory", "public"],
       "port": 8970
+    },
+    {
+      "name": "sp500-static",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8968", "--directory", "/Users/jonahliu/Projects/sp500-monitor/public"],
+      "port": 8968
     }
   ]
 }
