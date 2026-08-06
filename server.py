@@ -322,18 +322,35 @@ def fetch_cot():
 def fetch_naaim():
     """NAAIM 主动管理人股票敞口指数（周频，2006 至今）。
 
-    数据文件 URL 每周变化，先抓页面正则出当期 xlsx 链接再下载解析。"""
+    2026-08 网站改版后页面不再挂 xlsx 链接（新公开图表还带约3个月滞后），
+    改用 WordPress 媒体 API 查询最新上传的数据文件；老的页面正则作为备用。"""
     import xlsx_mini
+    xlsx_url = None
     with _pace("naaim.org", 1.0):
-        page = http_get_retry(
-            "https://naaim.org/programs/naaim-exposure-index/",
-            headers={"Accept": "text/html,*/*;q=0.8",
-                     "Accept-Language": "en-US,en;q=0.9"}, ua=UA)
-        import re as _re
-        m = _re.search(r'href="(https://naaim\.org/wp-content/uploads/[^"]+?\.xlsx)"', page)
-        if not m:
-            raise RuntimeError("NAAIM 页面上找不到数据文件链接（页面结构可能已变）")
-        raw = http_get_retry(m.group(1), headers={"Accept": "*/*"}, ua=UA, binary=True)
+        try:
+            arr = json.loads(http_get_retry(
+                "https://naaim.org/wp-json/wp/v2/media?"
+                + urllib.parse.urlencode({"search": "Data-since-Inception",
+                                          "per_page": "3", "orderby": "date",
+                                          "order": "desc"}),
+                headers={"Accept": "application/json"}, ua=UA))
+            for m in arr:
+                u = m.get("source_url") or ""
+                if u.endswith(".xlsx"):
+                    xlsx_url = u
+                    break
+        except Exception:
+            pass
+        if not xlsx_url:  # 备用：老版页面上的直链
+            page = http_get_retry(
+                "https://naaim.org/programs/naaim-exposure-index/",
+                headers={"Accept": "text/html,*/*;q=0.8",
+                         "Accept-Language": "en-US,en;q=0.9"}, ua=UA)
+            m = re.search(r'href="(https://naaim\.org/wp-content/uploads/[^"]+?\.xlsx)"', page)
+            if not m:
+                raise RuntimeError("NAAIM 数据文件定位失败（媒体API与页面直链均无果）")
+            xlsx_url = m.group(1)
+        raw = http_get_retry(xlsx_url, headers={"Accept": "*/*"}, ua=UA, binary=True)
     epoch = date(1899, 12, 30)
     seen = {}
     for r in xlsx_mini.rows(raw):
