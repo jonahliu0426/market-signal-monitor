@@ -18,7 +18,9 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # 2026-08-07 从 "pages" 更名：原并发组被平台侧的幽灵锁卡死（所有运行永久 pending），
+  # 换组名即换新队列绕开
+  group: pages-deploy
   cancel-in-progress: false
 
 jobs:
