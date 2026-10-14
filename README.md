@@ -33,7 +33,7 @@ python3 server.py
 | | 52 周新高距离 | Cboe SPX + Nasdaq ETF | 1975 至今 |
 | 情绪与仓位 · 仅参考 | AAII 散户情绪调查（看多/中性/看空） | AAII 官方 sentiment.xls | 1987 至今 |
 | | 标普期货投机者净头寸（COT） | CFTC 官方公开 API | 1997 至今 |
-| | 密歇根消费者信心 | FRED `UMCSENT` | 1952 至今 |
+| | 密歇根消费者信心 | 密歇根大学官网 tbmics.csv（备用 FRED `UMCSENT`） | 1952 至今 |
 | | NAAIM 主动管理人股票敞口 | NAAIM 官方周度文件 | 2006 至今 |
 | | Cboe SKEW（尾部风险定价） | Cboe 官方日线 CSV | 1990 至今 |
 | | FINRA 融资余额（含同比增速 + 现时预估：β模型×IBKR前哨外推补上发布滞后，虚线标注） | FINRA 官方月度文件 + IBKR 月度指标 PDF | 1997 至今 |

@@ -3,7 +3,8 @@
 
 数据源（全部免密钥；FRED API key 可选，用于解锁 ICE BofA 系列的完整历史）：
   - FRED  fredgraph.csv     宏观序列（利差、收益率曲线、初请、VIX、NFCI）
-  - Cboe  cdn.cboe.com      SPX 指数日线（1975 年至今）
+  - Cboe  cdn-api.cboe.com  SPX/SKEW/VVIX 指数日线（2026-09 起由 cdn.cboe.com 307 迁移至此）
+  - 密歇根大学 sca.isr.umich.edu  消费者信心月度终值（比 FRED 早约一个月）
   - Nasdaq api.nasdaq.com   ETF 日线（最近 10 年，未复权价格）
 
 用法:  python3 server.py [端口]   （默认 8967）
@@ -34,7 +35,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # 缓存时长（秒）：这些数据每天只更新一次，长缓存也能显著降低被上游风控的概率
 TTL_BY_SRC = {"fred": 12 * 3600, "cboe": 12 * 3600, "nasdaq": 6 * 3600,
               "aaii": 24 * 3600, "cot": 24 * 3600, "naaim": 24 * 3600,
-              "finra": 24 * 3600, "ibkr": 24 * 3600}
+              "finra": 24 * 3600, "ibkr": 24 * 3600, "umich": 12 * 3600}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -76,7 +77,10 @@ SERIES = {
     # ---- 其他情绪/仓位类 ----
     "skew":    {"src": "cboe", "id": "SKEW"},
     "vvix":    {"src": "cboe", "id": "VVIX"},
-    "umcsent": {"src": "fred", "id": "UMCSENT", "cosd": "1952-11-01"},
+    # 密歇根大学官网优先（FRED 应数据方要求延后一个月收录），失败回退 FRED
+    # accumulate：回退 FRED 时保留缓存里比 FRED 更新的月份，不让数据倒退
+    "umcsent": {"src": "umich", "id": "UMCSENT", "cosd": "1952-11-01",
+                "accumulate": True},
     # ---- 跨市场 ----
     "dgs10":   {"src": "fred", "id": "DGS10", "cosd": "1985-01-01"},
     "dollar":  {"src": "fred", "id": "DTWEXBGS", "cosd": "2006-01-01"},
@@ -133,7 +137,10 @@ def http_get_bytes(url, headers=None, timeout=30, ua=None):
     而用 curl 默认 UA 反而一切正常。所以默认不设置 UA；只有 Nasdaq 与
     AAII 的接口需要浏览器式头部（ua 参数显式传入）。
     """
-    cmd = ["/usr/bin/curl", "-sS", "-f", "--compressed",
+    # -f 只对 4xx/5xx 报错：不跟随重定向时，3xx 会以退出码 0 返回一小段 HTML，
+    # 被当成"空数据"静默吞掉（2026-09 Cboe 换域名即如此），故必须 -L
+    cmd = ["/usr/bin/curl", "-sS", "-f", "--compressed", "-L", "--max-redirs", "3",
+           "--proto-redir", "=https",
            "--max-time", str(int(timeout)), "--config", "-"]
     if ua:
         cmd += ["-A", ua]
@@ -216,9 +223,9 @@ def fetch_fred(series_id, cosd):
 
 
 def fetch_cboe(index_id):
-    url = ("https://cdn.cboe.com/api/global/us_indices/daily_prices/%s_History.csv"
+    url = ("https://cdn-api.cboe.com/api/global/us_indices/daily_prices/%s_History.csv"
            % index_id)
-    with _pace("cdn.cboe.com", 0.3):
+    with _pace("cdn-api.cboe.com", 0.3):
         text = http_get_retry(url)
     rows = list(csv.reader(io.StringIO(text)))
     if len(rows) < 2:
@@ -235,6 +242,39 @@ def fetch_cboe(index_id):
             continue
     dates = sorted(seen)
     return dates, [seen[d] for d in dates], ""
+
+
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"])}
+
+
+def fetch_umich():
+    """密歇根大学消费者信心月度终值（官网 tbmics.csv，1952-11 至今，早期为季度）。"""
+    with _pace("www.sca.isr.umich.edu", 1.0):
+        text = http_get_retry("https://www.sca.isr.umich.edu/files/tbmics.csv")
+    rows = list(csv.reader(io.StringIO(text)))
+    header = [h.strip().upper() for h in (rows[0] if rows else [])]
+    if "ICS_ALL" not in header:
+        raise RuntimeError("密歇根数据表头异常: %s" % ",".join(header)[:80])
+    col = header.index("ICS_ALL")
+    seen = {}
+    for row in rows[1:]:
+        if len(row) <= col:
+            continue
+        mon = _MONTHS.get(row[0].strip().lower())
+        try:
+            y, v = int(row[1]), float(row[col])
+        except ValueError:
+            continue
+        if mon and 1952 <= y <= 2100 and 20 <= v <= 130:
+            seen["%04d-%02d-01" % (y, mon)] = v
+    dates = sorted(seen)
+    if len(dates) < 600:
+        raise RuntimeError("密歇根数据行数异常（%d）" % len(dates))
+    if (date.today() - date.fromisoformat(dates[-1])).days > 75:
+        raise RuntimeError("密歇根最新数据过旧: " + dates[-1])
+    return dates, [seen[d] for d in dates], "月度终值，取自密歇根大学官网（比 FRED 早约一个月）。"
 
 
 def fetch_nasdaq(symbol):
@@ -430,6 +470,8 @@ _MONTHS_EN = {m: i + 1 for i, m in enumerate(
 
 def _parse_ibkr_pdf(raw):
     """从 IBKR 月度指标新闻稿 PDF 提取 (数据月份YYYY-MM-01, 保证金贷款$B)。"""
+    if not raw:
+        raise RuntimeError("IBKR 返回空响应（该月文件尚未发布）")
     text = pdf_to_text(raw)
     mm = re.search(r"(?:Information\s+)?for\s+(%s)\s+(\d{4})" % "|".join(_MONTHS_EN), text)
     bal = re.search(r"margin loan balances of\s+\$([\d,.]+)\s+billion", text, re.I)
@@ -444,7 +486,8 @@ def _parse_ibkr_pdf(raw):
 
 def fetch_ibkr():
     """IBKR 客户保证金贷款（$B）。总是抓最新一期；历史不足 13 个月时
-    按 YYYYMMMetricsPressRelease.pdf 命名规律回填（发布月 = 数据月+1）。"""
+    按 YYYYMMMetricsPressRelease.pdf 命名规律回填（YYYYMM = 数据月；
+    尚未发布的月份返回 200 + 空响应）。"""
     seen = {}
     with _pace("www.interactivebrokers.com", 1.2):
         raw = http_get_retry(
@@ -467,9 +510,8 @@ def fetch_ibkr():
             m -= 1
             if m == 0:
                 y, m = y - 1, 12
-            rel_y, rel_m = (y, m + 1) if m < 12 else (y + 1, 1)
             url = ("https://www.interactivebrokers.com/mkt/getFileNew.php?"
-                   "file=%04d%02dMetricsPressRelease.pdf" % (rel_y, rel_m))
+                   "file=%04d%02dMetricsPressRelease.pdf" % (y, m))
             try:
                 with _pace("www.interactivebrokers.com", 1.2):
                     kk, vv = _parse_ibkr_pdf(http_get_retry(url, binary=True))
@@ -483,9 +525,18 @@ def fetch_ibkr():
 
 def fetch_series(key):
     spec = SERIES[key]
+    src = spec["src"]
     extra = {}
     if spec["src"] == "fred":
         dates, values, note = fetch_fred(spec["id"], spec["cosd"])
+    elif spec["src"] == "umich":
+        try:
+            dates, values, note = fetch_umich()
+        except Exception as e:
+            sys.stderr.write("密歇根官网失败，回退 FRED（%s）\n" % e)
+            src = "fred"
+            dates, values, _ = fetch_fred(spec["id"], spec["cosd"])
+            note = "本次密歇根大学官网抓取失败，已回退 FRED（FRED 晚一个月收录）。"
     elif spec["src"] == "cboe":
         dates, values, note = fetch_cboe(spec["id"])
     elif spec["src"] == "aaii":
@@ -504,7 +555,7 @@ def fetch_series(key):
     if not dates:
         raise RuntimeError("空数据: " + key)
     return {
-        "key": key, "source": spec["src"], "source_id": spec.get("id", key),
+        "key": key, "source": src, "source_id": spec.get("id", key),
         "dates": dates, "values": values, "note": note,
         "fetched_at": int(time.time()), **extra,
     }

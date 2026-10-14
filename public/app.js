@@ -163,7 +163,15 @@ const NOTE_I18N = [
    "Monthly; month-end figures are published with roughly a one-month lag."],
   ["IBKR 客户保证金贷款（十亿美元），次月 1-3 日发布，作为 FINRA 的前哨参考。",
    "IBKR client margin loans ($B), published on the 1st–3rd of the following month — a sentinel for FINRA."],
+  ["月度终值，取自密歇根大学官网（比 FRED 早约一个月）。",
+   "Final monthly readings from the University of Michigan website (about a month ahead of FRED)."],
+  ["本次密歇根大学官网抓取失败，已回退 FRED（FRED 晚一个月收录）。",
+   "The University of Michigan website failed this time — fell back to FRED (posted one month later)."],
 ];
+const NAAIM_GATED_NOTE =
+  "NAAIM 自 2026 年 8 月下旬起不再公开发布数据文件，最新读数只在其会员系统（index.naaim.org，需登录）提供，官网公开图表滞后约 3 个月；本指标停在最后一期公开数据，NAAIM 恢复公开发布后会自动续上。";
+NOTE_I18N.push([NAAIM_GATED_NOTE,
+  "Since late Aug 2026 NAAIM no longer publishes its data file publicly — current readings are only in its member system (index.naaim.org, login required) and the public chart lags ~3 months. This indicator stays at the last public reading and will resume automatically if NAAIM republishes."]);
 function translateNote(note) {
   if (LANG === "zh" || !note) return note;
   let out = note;
@@ -1531,8 +1539,8 @@ function makeIndicators() { return [
     id: "umcsent", group: "g5",
     name: L("密歇根大学消费者信心指数", "U. Michigan Consumer Sentiment"),
     short: L("消费信心", "Consumer sent."),
-    subtitle: L("University of Michigan Consumer Sentiment · 月频 · FRED: UMCSENT · 1952 至今",
-      "University of Michigan Consumer Sentiment · monthly · FRED: UMCSENT · since 1952"),
+    subtitle: L("University of Michigan Consumer Sentiment · 月频 · 密歇根大学官网（备用 FRED: UMCSENT）· 1952 至今",
+      "University of Michigan Consumer Sentiment · monthly · U. Michigan website (fallback FRED: UMCSENT) · since 1952"),
     freq: "每月更新",
     deps: ["umcsent"],
     build(S) {
@@ -1576,11 +1584,11 @@ function makeIndicators() { return [
         "The longest continuous household-sentiment series (since 1952), surveyed monthly by the University of Michigan. Reflects how consumers feel about their finances and the economy — especially sensitive to inflation and gasoline shocks."),
       how: L("对股市的用法同样是反向、只看极端：信心极端低迷的月份（1980、2008-09、2011、2022 等）之后，股市远期回报的历史中位数明显偏高——情绪冰点往往意味着坏消息已在价格里。高涨区域则相反但更弱。",
         "For equities the usage is again contrarian at extremes: months of deeply depressed confidence (1980, 2008-09, 2011, 2022) were followed by clearly above-median forward returns — sentiment troughs tend to mean the bad news is priced. Elevated readings work the other way, but more weakly."),
-      caveat: L("它测的是家庭感受而非市场仓位，与股市的联动是间接的。FRED 只收录月度终值，比初值晚约一个月；月频序列对短窗口（1月/3月）几乎没有可看内容。",
-        "It measures household mood, not market positioning — the link to equities is indirect. FRED carries only final monthly values (about a month behind the preliminary print); a monthly series has little to show in 1M/3M windows."),
+      caveat: L("它测的是家庭感受而非市场仓位，与股市的联动是间接的。本站显示密歇根大学官网的月度终值（不含月中发布的初值），FRED 为备用源；月频序列对短窗口（1月/3月）几乎没有可看内容。",
+        "It measures household mood, not market positioning — the link to equities is indirect. This site shows the University of Michigan's final monthly readings (the mid-month preliminary is not included), with FRED as a fallback; a monthly series has little to show in 1M/3M windows."),
     },
-    source: L("数据：FRED · University of Michigan Consumer Sentiment（UMCSENT），月频，1952-11 至今（约一个月发布滞后）。",
-      "Data: FRED · University of Michigan Consumer Sentiment (UMCSENT), monthly, since Nov 1952 (~1-month publication lag)."),
+    source: L("数据：密歇根大学 Surveys of Consumers 官网月度终值（sca.isr.umich.edu），失败时回退 FRED UMCSENT（应数据方要求晚一个月收录），1952-11 至今。",
+      "Data: University of Michigan Surveys of Consumers final monthly readings (sca.isr.umich.edu), falling back to FRED UMCSENT (posted one month late at the source's request), since Nov 1952."),
   },
 
   /* ---------- 15. NAAIM 管理人仓位 ---------- */
@@ -1601,7 +1609,9 @@ function makeIndicators() { return [
       let label = L("管理人仓位中性", "Manager exposure neutral");
       if (pctl >= 90) label = L("管理人仓位拥挤（高敞口，仅参考）", "Crowded exposure (reference only)");
       else if (pctl <= 10) label = L("管理人仓位极低（仅参考）", "Exposure near lows (reference only)");
+      const ageDays = (Date.now() - new Date(dates[dates.length - 1] + "T00:00:00")) / 864e5;
       return {
+        note: ageDays > 21 ? NAAIM_GATED_NOTE : undefined,
         value: last.toFixed(0) + "%",
         delta: L("4周均线 ", "4-wk avg ") + (ma4 == null ? "—" : ma4.toFixed(0) + "%") +
           L(" · 历史分位 ", " · percentile ") + pctl.toFixed(0) + "%",
@@ -1637,8 +1647,8 @@ function makeIndicators() { return [
       caveat: L("样本只有约 200 家中小型主动管理机构，2006 年才开始，未经历完整的长周期检验；学术层面没有可靠的预测力证据——与本组其他指标一样，只作情绪温度计。",
         "The sample is only ~200 small-to-mid active managers, the series starts in 2006, and there is no solid academic evidence of predictive power — like everything in this group, a sentiment thermometer only."),
     },
-    source: L("数据：NAAIM Exposure Index 官方历史文件（每周更新，文件链接每期变化、自动从官网解析），周频，2006-07 至今。",
-      "Data: official NAAIM Exposure Index history file (weekly; the file URL changes each week and is auto-resolved from their site), since Jul 2006."),
+    source: L("数据：NAAIM Exposure Index 官方公开历史文件（文件链接自动从官网解析），周频，2006-07 起。",
+      "Data: NAAIM Exposure Index public history file (link auto-resolved from their site), weekly, from Jul 2006."),
   },
 
   /* ---------- 16. Cboe SKEW ---------- */
